@@ -243,110 +243,7 @@ class MapCanvas(wx.Panel):
         self.Bind(wx.EVT_SIZE, self.on_size)
 
         self.SetMinSize((800, 600))
-
-    def lat_lon_to_tile(self, lat, lon, zoom):
-        """Convert lat/lon to tile coordinates"""
-        lat_rad = math.radians(lat)
-        n = 2.0 ** zoom
-        x = (lon + 180.0) / 360.0 * n
-        y = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
-        return x, y
-
-    def tile_to_lat_lon(self, x, y, zoom):
-        """Convert tile coordinates to lat/lon"""
-        n = 2.0 ** zoom
-        lon = x / n * 360.0 - 180.0
-        lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
-        lat = math.degrees(lat_rad)
-        return lat, lon
-
-    def get_tile_url(self, provider, z, x, y):
-        """Get the URL for a tile"""
-        if provider == MapProvider.OSM:
-            # Use OSM tile server
-            servers = ['a', 'b', 'c']
-            server = servers[abs(hash((x, y))) % len(servers)]
-            return f"https://{server}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        elif provider == MapProvider.SATELLITE:
-            # Use ESRI World Imagery
-            return f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-        elif provider == MapProvider.TERRAIN:
-            # Use OpenTopoMap
-            servers = ['a', 'b', 'c']
-            server = servers[abs(hash((x, y))) % len(servers)]
-            return f"https://{server}.tile.opentopomap.org/{z}/{x}/{y}.png"
-        return None
-
-    def load_tile_async(self, provider, z, x, y):
-        """Load a tile asynchronously"""
-
-        def load():
-            try:
-                # Check cache first
-                image = self.tile_cache.get_tile(provider, z, x, y)
-                if image:
-                    wx.CallAfter(self.on_tile_loaded, provider, z, x, y,
-                                 image)
-                    return
-
-                # Download tile
-                url = self.get_tile_url(provider, z, x, y)
-                if url:
-                    req = urllib.request.Request(url, headers={
-                        'User-Agent': 'CityJSON Creator/1.0'
-                    })
-                    with urllib.request.urlopen(req,
-                                                timeout=5) as response:
-                        data = response.read()
-
-                    # Save to cache and convert to image
-                    image = self.tile_cache.save_tile(provider, z, x, y,
-                                                      data)
-                    if image:
-                        wx.CallAfter(self.on_tile_loaded, provider, z, x,
-                                     y, image)
-            except Exception as e:
-                print(f"Failed to load tile {z}/{x}/{y}: {e}")
-            finally:
-                wx.CallAfter(self.on_tile_load_complete, z, x, y)
-
-        thread = threading.Thread(target=load)
-        thread.daemon = True
-        thread.start()
-
-    def on_tile_loaded(self, provider, z, x, y, image):
-        """Called when a tile has been loaded"""
-        if provider == self.map_provider:
-            self.map_tiles[(z, x, y)] = image
-            self.Refresh()
-
-    def on_tile_load_complete(self, z, x, y):
-        """Called when tile loading is complete"""
-        self.tiles_loading.discard((z, x, y))
-
-    def update_geo_center(self):
-        """Update geographic center based on pan"""
-        width, height = self.GetSize()
-        center_x = width / 2
-        center_y = height / 2
-
-        # Calculate tile offset
-        tile_x, tile_y = self.lat_lon_to_tile(self.geo_center_lat,
-                                              self.geo_center_lon,
-                                              self.geo_zoom)
-
-        # Apply pan offset in tile coordinates
-        tile_offset_x = -self.pan_x / 256.0
-        tile_offset_y = -self.pan_y / 256.0
-
-        new_tile_x = tile_x + tile_offset_x
-        new_tile_y = tile_y + tile_offset_y
-
-        # Convert back to lat/lon
-        self.geo_center_lat, self.geo_center_lon = self.tile_to_lat_lon(
-            new_tile_x, new_tile_y, self.geo_zoom)
-        self.pan_x = 0
-        self.pan_y = 0
+        self.SetBackgroundColour(wx.WHITE)
 
     def screen_to_world(self, x: float, y: float) -> Tuple[float, float]:
         """Convert screen coordinates to world coordinates"""
@@ -398,17 +295,92 @@ class MapCanvas(wx.Panel):
 
         return best_x, best_y
 
+    def lat_lon_to_tile(self, lat, lon, zoom):
+        """Convert lat/lon to tile coordinates"""
+        lat_rad = math.radians(lat)
+        n = 2.0 ** zoom
+        x = (lon + 180.0) / 360.0 * n
+        y = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
+        return x, y
+
+    def tile_to_lat_lon(self, x, y, zoom):
+        """Convert tile coordinates to lat/lon"""
+        n = 2.0 ** zoom
+        lon = x / n * 360.0 - 180.0
+        lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
+        lat = math.degrees(lat_rad)
+        return lat, lon
+
+    def get_tile_url(self, provider, z, x, y):
+        """Get the URL for a tile"""
+        if provider == MapProvider.OSM:
+            servers = ['a', 'b', 'c']
+            server = servers[abs(hash((x, y))) % len(servers)]
+            return f"https://{server}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        elif provider == MapProvider.SATELLITE:
+            return f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        elif provider == MapProvider.TERRAIN:
+            servers = ['a', 'b', 'c']
+            server = servers[abs(hash((x, y))) % len(servers)]
+            return f"https://{server}.tile.opentopomap.org/{z}/{x}/{y}.png"
+        return None
+
+    def load_tile_async(self, provider, z, x, y):
+        """Load a tile asynchronously"""
+
+        def load():
+            try:
+                image = self.tile_cache.get_tile(provider, z, x, y)
+                if image:
+                    wx.CallAfter(self.on_tile_loaded, provider, z, x, y,
+                                 image)
+                    return
+
+                url = self.get_tile_url(provider, z, x, y)
+                if url:
+                    req = urllib.request.Request(url, headers={
+                        'User-Agent': 'CityJSON Creator/1.0'
+                    })
+                    with urllib.request.urlopen(req,
+                                                timeout=5) as response:
+                        data = response.read()
+
+                    image = self.tile_cache.save_tile(provider, z, x, y,
+                                                      data)
+                    if image:
+                        wx.CallAfter(self.on_tile_loaded, provider, z, x,
+                                     y, image)
+            except Exception as e:
+                print(f"Failed to load tile {z}/{x}/{y}: {e}")
+            finally:
+                wx.CallAfter(self.on_tile_load_complete, z, x, y)
+
+        thread = threading.Thread(target=load)
+        thread.daemon = True
+        thread.start()
+
+    def on_tile_loaded(self, provider, z, x, y, image):
+        """Called when a tile has been loaded"""
+        if provider == self.map_provider:
+            self.map_tiles[(z, x, y)] = image
+            self.Refresh()
+
+    def on_tile_load_complete(self, z, x, y):
+        """Called when tile loading is complete"""
+        self.tiles_loading.discard((z, x, y))
+
     def on_paint(self, event):
         """Handle paint events"""
         dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(wx.WHITE))
         dc.Clear()
-
-        # Set up coordinate system
-        gc = wx.GraphicsContext.Create(dc)
 
         # Draw map tiles if enabled
         if self.map_provider != MapProvider.NONE and self.map_enabled:
-            self.draw_map_tiles(gc)
+            self.draw_map_tiles(dc)
+
+        # Set up graphics context for other drawing
+        gc = wx.GraphicsContext.Create(dc)
 
         # Draw grid
         self.draw_grid(gc)
@@ -425,29 +397,23 @@ class MapCanvas(wx.Panel):
         if self.mode == SelectionMode.RECTANGLE_SELECT and self.selection_rect_start and self.current_mouse_pos:
             self.draw_selection_rectangle(gc)
 
-    def draw_map_tiles(self, gc):
+    def draw_map_tiles(self, dc):
         """Draw map tiles as background"""
         width, height = self.GetSize()
-
-        # Calculate which tiles we need
         tile_size = 256
 
-        # Get center tile
         center_tile_x, center_tile_y = self.lat_lon_to_tile(
             self.geo_center_lat, self.geo_center_lon, self.geo_zoom
         )
 
-        # Calculate visible tile range
         tiles_x = math.ceil(width / tile_size) + 2
         tiles_y = math.ceil(height / tile_size) + 2
 
-        # Calculate offset for smooth panning
         frac_x = center_tile_x - math.floor(center_tile_x)
         frac_y = center_tile_y - math.floor(center_tile_y)
         offset_x = -frac_x * tile_size + width / 2 + self.pan_x
         offset_y = -frac_y * tile_size + height / 2 + self.pan_y
 
-        # Draw tiles
         start_tile_x = int(center_tile_x) - tiles_x // 2
         start_tile_y = int(center_tile_y) - tiles_y // 2
 
@@ -456,31 +422,24 @@ class MapCanvas(wx.Panel):
                 tile_x = start_tile_x + dx
                 tile_y = start_tile_y + dy
 
-                # Skip invalid tiles
                 max_tile = 2 ** self.geo_zoom
                 if tile_x < 0 or tile_x >= max_tile or tile_y < 0 or tile_y >= max_tile:
                     continue
 
-                # Calculate screen position
                 screen_x = offset_x + (dx - tiles_x // 2) * tile_size
                 screen_y = offset_y + (dy - tiles_y // 2) * tile_size
 
-                # Get or load tile
                 tile_key = (self.geo_zoom, tile_x, tile_y)
                 if tile_key in self.map_tiles:
-                    # Draw tile
                     image = self.map_tiles[tile_key]
                     bitmap = wx.Bitmap(image)
-                    gc.DrawBitmap(bitmap, screen_x, screen_y, tile_size,
-                                  tile_size)
+                    dc.DrawBitmap(bitmap, int(screen_x), int(screen_y))
                 else:
-                    # Draw placeholder and load tile
-                    gc.SetBrush(wx.Brush(wx.Colour(240, 240, 240)))
-                    gc.SetPen(wx.Pen(wx.Colour(200, 200, 200), 1))
-                    gc.DrawRectangle(screen_x, screen_y, tile_size,
-                                     tile_size)
+                    dc.SetBrush(wx.Brush(wx.Colour(240, 240, 240)))
+                    dc.SetPen(wx.Pen(wx.Colour(200, 200, 200), 1))
+                    dc.DrawRectangle(int(screen_x), int(screen_y),
+                                     tile_size, tile_size)
 
-                    # Load tile if not already loading
                     if tile_key not in self.tiles_loading:
                         self.tiles_loading.add(tile_key)
                         self.load_tile_async(self.map_provider,
@@ -488,7 +447,6 @@ class MapCanvas(wx.Panel):
 
     def draw_grid(self, gc):
         """Draw background grid"""
-        # Only draw grid if no map or with transparency
         if self.map_provider == MapProvider.NONE:
             gc.SetPen(wx.Pen(wx.Colour(220, 220, 220), 1))
         else:
@@ -497,13 +455,11 @@ class MapCanvas(wx.Panel):
         width, height = self.GetSize()
         grid_size = 50 * self.zoom_level
 
-        # Vertical lines
         x = self.pan_x % grid_size
         while x < width:
             gc.StrokeLine(x, 0, x, height)
             x += grid_size
 
-        # Horizontal lines
         y = self.pan_y % grid_size
         while y < height:
             gc.StrokeLine(0, y, width, y)
@@ -514,7 +470,6 @@ class MapCanvas(wx.Panel):
         x1, y1 = self.world_to_screen(building.x1, building.y1)
         x2, y2 = self.world_to_screen(building.x2, building.y2)
 
-        # Set colors based on selection
         if building.selected:
             fill_color = wx.Colour(150, 180, 255, 180)
             border_color = wx.Colour(0, 0, 255)
@@ -524,18 +479,14 @@ class MapCanvas(wx.Panel):
 
         gc.SetBrush(wx.Brush(fill_color))
         gc.SetPen(wx.Pen(border_color, 2))
-
-        # Draw rectangle
         gc.DrawRectangle(x1, y1, x2 - x1, y2 - y1)
 
-        # Draw height text
         gc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL))
         text = f"{building.stories}F"
         tw, th = gc.GetTextExtent(text)
         gc.DrawText(text, (x1 + x2) / 2 - tw / 2, (y1 + y2) / 2 - th / 2)
 
-        # Draw corner handles if selected
         if building.selected:
             gc.SetBrush(wx.Brush(wx.Colour(255, 255, 255)))
             gc.SetPen(wx.Pen(wx.Colour(0, 0, 255), 2))
@@ -554,9 +505,8 @@ class MapCanvas(wx.Panel):
 
         gc.SetBrush(wx.Brush(wx.Colour(100, 255, 100, 100)))
         gc.SetPen(wx.Pen(wx.Colour(0, 200, 0), 2, wx.PENSTYLE_DOT))
-
-        gc.DrawRectangle(min(sx1, sx2), min(sy1, sy2),
-                         abs(sx2 - sx1), abs(sy2 - sy1))
+        gc.DrawRectangle(min(sx1, sx2), min(sy1, sy2), abs(sx2 - sx1),
+                         abs(sy2 - sy1))
 
     def draw_selection_rectangle(self, gc):
         """Draw selection rectangle"""
@@ -565,9 +515,8 @@ class MapCanvas(wx.Panel):
 
         gc.SetBrush(wx.Brush(wx.Colour(0, 0, 255, 30)))
         gc.SetPen(wx.Pen(wx.Colour(0, 0, 255), 1, wx.PENSTYLE_DOT))
-
-        gc.DrawRectangle(min(x1, x2), min(y1, y2),
-                         abs(x2 - x1), abs(y2 - y1))
+        gc.DrawRectangle(min(x1, x2), min(y1, y2), abs(x2 - x1),
+                         abs(y2 - y1))
 
     def on_mouse_down(self, event):
         """Handle mouse down events"""
@@ -579,7 +528,6 @@ class MapCanvas(wx.Panel):
             if self.first_corner is None:
                 self.first_corner = self.snap_point(wx, wy)
             else:
-                # Create building
                 x2, y2 = self.snap_point(wx, wy)
                 building = Building(
                     id=str(uuid.uuid4()),
@@ -593,15 +541,14 @@ class MapCanvas(wx.Panel):
                 self.buildings.append(building)
                 self.first_corner = None
                 self.mode = SelectionMode.NORMAL
+                self.parent.add_building_btn.SetLabel("Add Building")
                 self.Refresh()
 
         elif self.mode == SelectionMode.NORMAL:
             if event.ShiftDown():
-                # Start rectangle selection
                 self.mode = SelectionMode.RECTANGLE_SELECT
                 self.selection_rect_start = event.GetPosition()
             else:
-                # Check for corner drag
                 for building in self.buildings:
                     if building.selected:
                         corner_idx = building.get_corner_index(wx, wy,
@@ -611,7 +558,6 @@ class MapCanvas(wx.Panel):
                             self.drag_corner_index = corner_idx
                             return
 
-                # Check for building click
                 clicked_building = None
                 for building in reversed(self.buildings):
                     if building.contains_point(wx, wy):
@@ -620,13 +566,11 @@ class MapCanvas(wx.Panel):
 
                 if clicked_building:
                     if not event.ControlDown():
-                        # Clear selection unless Ctrl is held
                         for b in self.buildings:
                             b.selected = False
                     clicked_building.selected = not clicked_building.selected if event.ControlDown() else True
                     self.drag_building = clicked_building
                 else:
-                    # Click on empty space - clear selection
                     if not event.ControlDown():
                         for b in self.buildings:
                             b.selected = False
@@ -638,7 +582,6 @@ class MapCanvas(wx.Panel):
         self.mouse_down = False
 
         if self.mode == SelectionMode.RECTANGLE_SELECT:
-            # Select buildings in rectangle
             x1, y1 = self.screen_to_world(*self.selection_rect_start)
             x2, y2 = self.screen_to_world(event.GetX(), event.GetY())
 
@@ -666,19 +609,16 @@ class MapCanvas(wx.Panel):
 
         if self.mouse_down and self.drag_start:
             if self.drag_corner and self.drag_corner_index is not None:
-                # Dragging a corner
                 snapped_x, snapped_y = self.snap_point(wx, wy,
                                                        self.drag_corner)
                 self.drag_corner.move_corner(self.drag_corner_index,
                                              snapped_x, snapped_y)
                 self.Refresh()
             elif self.drag_building:
-                # Dragging a building
                 start_wx, start_wy = self.screen_to_world(*self.drag_start)
                 dx = wx - start_wx
                 dy = wy - start_wy
 
-                # Apply snapping to the drag
                 new_x1 = self.drag_building.x1 + dx
                 new_y1 = self.drag_building.y1 + dy
                 snapped_x, snapped_y = self.snap_point(new_x1, new_y1,
@@ -692,7 +632,6 @@ class MapCanvas(wx.Panel):
                 self.Refresh()
             elif event.MiddleIsDown() or (
                     event.RightIsDown() and not self.mode == SelectionMode.ADD_BUILDING):
-                # Panning
                 dx = event.GetX() - self.drag_start[0]
                 dy = event.GetY() - self.drag_start[1]
                 self.pan_x += dx
@@ -711,12 +650,10 @@ class MapCanvas(wx.Panel):
         rotation = event.GetWheelRotation()
         mx, my = event.GetPosition()
 
-        # Calculate zoom
         zoom_factor = 1.1 if rotation > 0 else 0.9
         new_zoom = self.zoom_level * zoom_factor
         new_zoom = max(0.1, min(10.0, new_zoom))
 
-        # Adjust pan to zoom around mouse position
         wx, wy = self.screen_to_world(mx, my)
         self.zoom_level = new_zoom
         new_mx, new_my = self.world_to_screen(wx, wy)
@@ -724,9 +661,7 @@ class MapCanvas(wx.Panel):
         self.pan_x += mx - new_mx
         self.pan_y += my - new_my
 
-        # Update map zoom level if needed
         if self.map_provider != MapProvider.NONE:
-            # Adjust geo zoom based on canvas zoom
             if self.zoom_level > 2.0 and self.geo_zoom < 18:
                 self.geo_zoom += 1
                 self.map_tiles.clear()
@@ -761,13 +696,11 @@ class MapCanvas(wx.Panel):
         if not self.buildings:
             return
 
-        # Find bounding box
         min_x = min(b.x1 for b in self.buildings)
         max_x = max(b.x2 for b in self.buildings)
         min_y = min(b.y1 for b in self.buildings)
         max_y = max(b.y2 for b in self.buildings)
 
-        # Calculate zoom and pan
         width, height = self.GetSize()
         margin = 50
 
@@ -778,7 +711,6 @@ class MapCanvas(wx.Panel):
 
         self.zoom_level = min(zoom_x, zoom_y, 5.0)
 
-        # Center the view
         center_x = (min_x + max_x) / 2
         center_y = (min_y + max_y) / 2
 
@@ -792,7 +724,7 @@ class BasemapDialog(wx.Dialog):
     """Dialog for selecting and configuring basemap"""
 
     def __init__(self, parent, current_provider, map_enabled, lat, lon):
-        super().__init__(parent, title="Select Basemap", size=(450, 420))
+        super().__init__(parent, title="Select Basemap", size=(450, 500))
 
         self.provider = current_provider
         self.enabled = map_enabled
@@ -809,22 +741,13 @@ class BasemapDialog(wx.Dialog):
         sizer.Add(self.enable_cb, 0, wx.ALL, 10)
 
         # Map provider selection
-        provider_box = wx.StaticBox(panel, label="Map Provider")
-        provider_sizer = wx.StaticBoxSizer(provider_box, wx.VERTICAL)
-
-        self.provider_radios = []
-        for provider in MapProvider:
-            if provider != MapProvider.NONE:
-                radio = wx.RadioButton(panel, label=provider.value,
-                                       style=wx.RB_SINGLE if provider == MapProvider.OSM else 0)
-                radio.SetValue(provider == self.provider)
-                radio.Bind(wx.EVT_RADIOBUTTON,
-                           lambda e, p=provider: self.on_provider_changed(
-                               p))
-                provider_sizer.Add(radio, 0, wx.ALL, 5)
-                self.provider_radios.append(radio)
-
-        sizer.Add(provider_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+        lblList = [ p.value for p in MapProvider if p.value != "None" ]
+        self.provider_box = wx.RadioBox(panel, label="Map Provider",
+                                   choices=lblList,
+                                   majorDimension=1,
+                                   style=wx.RA_SPECIFY_COLS)
+        sizer.Add(self.provider_box, 0, wx.EXPAND | wx.ALL, 10)
+        self.provider_box.Bind(wx.EVT_RADIOBOX,self.on_provider_changed)
 
         # Location settings
         location_box = wx.StaticBox(panel, label="Map Center Location")
@@ -896,11 +819,18 @@ class BasemapDialog(wx.Dialog):
 
     def update_radio_states(self):
         """Enable/disable radio buttons based on checkbox"""
-        for radio in self.provider_radios:
-            radio.Enable(self.enabled)
+        self.provider_box.Enable(self.enabled)
 
-    def on_provider_changed(self, provider):
+    def on_provider_changed(self, event):
         """Handle provider selection change"""
+        rb = event.GetEventObject()
+        label = rb.GetStringSelection()
+        for p in MapProvider:
+            if p.value == label:
+                provider = p
+                break
+        else:
+            return
         self.provider = provider
 
     def set_location(self, lat, lon):
@@ -1224,6 +1154,8 @@ class MainFrame(wx.Frame):
 
         if dialog.ShowModal() == wx.ID_OK:
             provider, enabled, lat, lon = dialog.get_values()
+
+            print(provider, enabled, lat, lon)
 
             # Update canvas settings
             self.canvas.map_provider = provider
