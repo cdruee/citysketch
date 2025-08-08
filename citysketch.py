@@ -213,7 +213,6 @@ class MapCanvas(wx.Panel):
 
         # Map state
         self.map_provider = MapProvider.NONE
-        self.map_enabled = True
         self.tile_cache = TileCache()
         self.tiles_loading = set()
         self.map_tiles = {}  # (z,x,y): wx.Image
@@ -376,7 +375,7 @@ class MapCanvas(wx.Panel):
         dc.Clear()
 
         # Draw map tiles if enabled
-        if self.map_provider != MapProvider.NONE and self.map_enabled:
+        if self.map_provider != MapProvider.NONE:
             self.draw_map_tiles(dc)
 
         # Set up graphics context for other drawing
@@ -723,29 +722,23 @@ class MapCanvas(wx.Panel):
 class BasemapDialog(wx.Dialog):
     """Dialog for selecting and configuring basemap"""
 
-    def __init__(self, parent, current_provider, map_enabled, lat, lon):
+    def __init__(self, parent, current_provider, lat, lon):
         super().__init__(parent, title="Select Basemap", size=(450, 500))
 
         self.provider = current_provider
-        self.enabled = map_enabled
         self.lat = lat
         self.lon = lon
 
         panel = wx.Panel(self)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        # Map enabled checkbox
-        self.enable_cb = wx.CheckBox(panel, label="Enable Basemap")
-        self.enable_cb.SetValue(self.enabled)
-        self.enable_cb.Bind(wx.EVT_CHECKBOX, self.on_enable_changed)
-        sizer.Add(self.enable_cb, 0, wx.ALL, 10)
-
         # Map provider selection
-        lblList = [ p.value for p in MapProvider if p.value != "None" ]
+        lblList = [ p.value for p in MapProvider ]
         self.provider_box = wx.RadioBox(panel, label="Map Provider",
                                    choices=lblList,
                                    majorDimension=1,
                                    style=wx.RA_SPECIFY_COLS)
+        self.provider_box.SetStringSelection(current_provider.value)
         sizer.Add(self.provider_box, 0, wx.EXPAND | wx.ALL, 10)
         self.provider_box.Bind(wx.EVT_RADIOBOX,self.on_provider_changed)
 
@@ -795,9 +788,6 @@ class BasemapDialog(wx.Dialog):
         # Add some spacing
         sizer.Add((-1, 10))
 
-        # Update radio button states based on enable checkbox
-        self.update_radio_states()
-
         # Buttons
         btn_sizer = wx.StdDialogButtonSizer()
         ok_btn = wx.Button(panel, wx.ID_OK)
@@ -811,15 +801,6 @@ class BasemapDialog(wx.Dialog):
 
         # Center the dialog
         self.Centre()
-
-    def on_enable_changed(self, event):
-        """Handle enable checkbox change"""
-        self.enabled = self.enable_cb.GetValue()
-        self.update_radio_states()
-
-    def update_radio_states(self):
-        """Enable/disable radio buttons based on checkbox"""
-        self.provider_box.Enable(self.enabled)
 
     def on_provider_changed(self, event):
         """Handle provider selection change"""
@@ -847,7 +828,7 @@ class BasemapDialog(wx.Dialog):
             lat = self.lat
             lon = self.lon
 
-        return self.provider if self.enabled else MapProvider.NONE, self.enabled, lat, lon
+        return self.provider, lat, lon
 
 class HeightDialog(wx.Dialog):
     """Dialog for setting building height"""
@@ -1147,30 +1128,28 @@ class MainFrame(wx.Frame):
         dialog = BasemapDialog(
             self,
             self.canvas.map_provider,
-            self.canvas.map_enabled,
             self.canvas.geo_center_lat,
             self.canvas.geo_center_lon
         )
 
         if dialog.ShowModal() == wx.ID_OK:
-            provider, enabled, lat, lon = dialog.get_values()
+            provider, lat, lon = dialog.get_values()
 
-            print(provider, enabled, lat, lon)
-
-            # Update canvas settings
-            self.canvas.map_provider = provider
-            self.canvas.map_enabled = enabled
-            self.canvas.geo_center_lat = lat
-            self.canvas.geo_center_lon = lon
+            print(provider, lat, lon)
 
             # Clear tile cache if provider changed
             if provider != self.canvas.map_provider:
                 self.canvas.map_tiles.clear()
                 self.canvas.tiles_loading.clear()
 
+            # Update canvas settings
+            self.canvas.map_provider = provider
+            self.canvas.geo_center_lat = lat
+            self.canvas.geo_center_lon = lon
+
             self.canvas.Refresh()
 
-            if enabled and provider != MapProvider.NONE:
+            if provider != MapProvider.NONE:
                 self.SetStatusText(f"Basemap: {provider.value}")
             else:
                 self.SetStatusText("Basemap disabled")
@@ -1290,8 +1269,6 @@ class MainFrame(wx.Frame):
                         self.canvas.map_provider = provider
                         break
 
-                self.canvas.map_enabled = creator_settings.get(
-                    'map_enabled', True)
                 self.canvas.geo_center_lat = creator_settings.get(
                     'geo_center_lat', 49.4875)
                 self.canvas.geo_center_lon = creator_settings.get(
@@ -1418,7 +1395,6 @@ class MainFrame(wx.Frame):
                     "referenceSystem": f"https://www.opengis.net/def/crs/EPSG/0/4326",
                     "cityjson_creator_settings": {
                         "map_provider": self.canvas.map_provider.value,
-                        "map_enabled": self.canvas.map_enabled,
                         "geo_center_lat": self.canvas.geo_center_lat,
                         "geo_center_lon": self.canvas.geo_center_lon,
                         "geo_zoom": self.canvas.geo_zoom,
@@ -1493,35 +1469,3 @@ if __name__ == '__main__':
     app = CityJSONApp()
     app.MainLoop()
 
-    # # Edit menu
-    # edit_menu = wx.Menu()
-    # basemap_item = edit_menu.Append(wx.ID_ANY, "Select &Basemap",
-    #                                 "Choose a basemap")
-    # zoom_item = edit_menu.Append(wx.ID_ANY, "&Zoom to Buildings\tCtrl+0",
-    #                              "Zoom to fit all buildings")
-    # storey_item = edit_menu.Append(wx.ID_ANY, "Set Storey &Height",
-    #                                "Set the height per storey")
-    #
-    # # Help menu
-    # help_menu = wx.Menu()
-    # help_menu.Append(wx.ID_ABOUT, "&About", "About this application")
-    #
-    # menubar.Append(file_menu, "&File")
-    # menubar.Append(edit_menu, "&Edit")
-    # menubar.Append(help_menu, "&Help")
-    #
-    # self.SetMenuBar(menubar)
-    #
-    # # Bind menu events
-    # self.Bind(wx.EVT_MENU, self.on_new, id=wx.ID_NEW)
-    # self.Bind(wx.EVT_MENU, self.on_open, id=wx.ID_OPEN)
-    # self.Bind(wx.EVT_MENU, self.on_save, id=wx.ID_SAVE)
-    # self.Bind(wx.EVT_MENU, self.on_save_as, id=wx.ID_SAVEAS)
-    # self.Bind(wx.EVT_MENU, self.on_exit, id=wx.ID_EXIT)
-    # self.Bind(wx.EVT_MENU, self.on_about, id=wx.ID_ABOUT)
-    #
-    # # Bind edit menu events
-    # self.Bind(wx.EVT_MENU, self.on_select_basemap, id=basemap_item.GetId())
-    # self.Bind(wx.EVT_MENU, self.on_zoom_to_buildings, id=zoom_item.GetId())
-    # self.Bind(wx.EVT_MENU, self.on_set_storey_height,
-    #           id=storey_item.GetId())
