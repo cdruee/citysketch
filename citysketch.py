@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# !/usr/bin/env python3
 """
 CityJSON Creator Application
 A wxPython GUI application for creating and editing CityJSON files with building data.
@@ -11,9 +11,17 @@ import math
 import sys
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Set
+from typing import List, Tuple, Optional, Set, Dict
 from enum import Enum
 import uuid
+import urllib.request
+import urllib.parse
+import threading
+import io
+from collections import OrderedDict
+import hashlib
+import os
+import tempfile
 
 # Version info
 APP_VERSION = "1.0.0"
@@ -23,6 +31,81 @@ class SelectionMode(Enum):
     NORMAL = "normal"
     ADD_BUILDING = "add_building"
     RECTANGLE_SELECT = "rectangle_select"
+
+
+class MapProvider(Enum):
+    NONE = "None"
+    OSM = "OpenStreetMap"
+    SATELLITE = "Satellite"
+    TERRAIN = "Terrain"
+
+
+class TileCache:
+    """Simple tile cache for map tiles"""
+
+    def __init__(self, cache_dir=None):
+        if cache_dir is None:
+            cache_dir = os.path.join(tempfile.gettempdir(),
+                                     'cityjson_tiles')
+        self.cache_dir = cache_dir
+        os.makedirs(cache_dir, exist_ok=True)
+        self.memory_cache = {}
+        self.max_memory_tiles = 100
+
+    def get_cache_path(self, provider, z, x, y):
+        """Get the file path for a cached tile"""
+        provider_dir = os.path.join(self.cache_dir, provider.value)
+        os.makedirs(provider_dir, exist_ok=True)
+        return os.path.join(provider_dir, f"{z}_{x}_{y}.png")
+
+    def get_tile(self, provider, z, x, y):
+        """Get a tile from cache"""
+        key = (provider, z, x, y)
+
+        # Check memory cache
+        if key in self.memory_cache:
+            return self.memory_cache[key]
+
+        # Check disk cache
+        cache_path = self.get_cache_path(provider, z, x, y)
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'rb') as f:
+                    data = f.read()
+                image = wx.Image(io.BytesIO(data))
+
+                # Add to memory cache
+                if len(self.memory_cache) >= self.max_memory_tiles:
+                    # Remove oldest items
+                    for _ in range(20):
+                        self.memory_cache.pop(
+                            next(iter(self.memory_cache)))
+                self.memory_cache[key] = image
+
+                return image
+            except:
+                pass
+
+        return None
+
+    def save_tile(self, provider, z, x, y, data):
+        """Save a tile to cache"""
+        cache_path = self.get_cache_path(provider, z, x, y)
+        try:
+            with open(cache_path, 'wb') as f:
+                f.write(data)
+
+            # Also add to memory cache
+            image = wx.Image(io.BytesIO(data))
+            key = (provider, z, x, y)
+            if len(self.memory_cache) >= self.max_memory_tiles:
+                for _ in range(20):
+                    self.memory_cache.pop(next(iter(self.memory_cache)))
+            self.memory_cache[key] = image
+
+            return image
+        except:
+            return None
 
 
 @dataclass
@@ -128,6 +211,18 @@ class MapCanvas(wx.Panel):
         self.pan_y = 0
         self.storey_height = 3.3  # meters per storey
 
+        # Map state
+        self.map_provider = MapProvider.NONE
+        self.map_enabled = True
+        self.tile_cache = TileCache()
+        self.tiles_loading = set()
+        self.map_tiles = {}  # (z,x,y): wx.Image
+
+        # Geographic coordinates (center of view)
+        self.geo_center_lat = 49.4875  # Default: Ludwigshafen area
+        self.geo_center_lon = 8.4660
+        self.geo_zoom = 16  # Tile zoom level
+
         # Interaction state
         self.mouse_down = False
         self.drag_start = None
@@ -148,6 +243,110 @@ class MapCanvas(wx.Panel):
         self.Bind(wx.EVT_SIZE, self.on_size)
 
         self.SetMinSize((800, 600))
+
+    def lat_lon_to_tile(self, lat, lon, zoom):
+        """Convert lat/lon to tile coordinates"""
+        lat_rad = math.radians(lat)
+        n = 2.0 ** zoom
+        x = (lon + 180.0) / 360.0 * n
+        y = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
+        return x, y
+
+    def tile_to_lat_lon(self, x, y, zoom):
+        """Convert tile coordinates to lat/lon"""
+        n = 2.0 ** zoom
+        lon = x / n * 360.0 - 180.0
+        lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
+        lat = math.degrees(lat_rad)
+        return lat, lon
+
+    def get_tile_url(self, provider, z, x, y):
+        """Get the URL for a tile"""
+        if provider == MapProvider.OSM:
+            # Use OSM tile server
+            servers = ['a', 'b', 'c']
+            server = servers[abs(hash((x, y))) % len(servers)]
+            return f"https://{server}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        elif provider == MapProvider.SATELLITE:
+            # Use ESRI World Imagery
+            return f"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        elif provider == MapProvider.TERRAIN:
+            # Use OpenTopoMap
+            servers = ['a', 'b', 'c']
+            server = servers[abs(hash((x, y))) % len(servers)]
+            return f"https://{server}.tile.opentopomap.org/{z}/{x}/{y}.png"
+        return None
+
+    def load_tile_async(self, provider, z, x, y):
+        """Load a tile asynchronously"""
+
+        def load():
+            try:
+                # Check cache first
+                image = self.tile_cache.get_tile(provider, z, x, y)
+                if image:
+                    wx.CallAfter(self.on_tile_loaded, provider, z, x, y,
+                                 image)
+                    return
+
+                # Download tile
+                url = self.get_tile_url(provider, z, x, y)
+                if url:
+                    req = urllib.request.Request(url, headers={
+                        'User-Agent': 'CityJSON Creator/1.0'
+                    })
+                    with urllib.request.urlopen(req,
+                                                timeout=5) as response:
+                        data = response.read()
+
+                    # Save to cache and convert to image
+                    image = self.tile_cache.save_tile(provider, z, x, y,
+                                                      data)
+                    if image:
+                        wx.CallAfter(self.on_tile_loaded, provider, z, x,
+                                     y, image)
+            except Exception as e:
+                print(f"Failed to load tile {z}/{x}/{y}: {e}")
+            finally:
+                wx.CallAfter(self.on_tile_load_complete, z, x, y)
+
+        thread = threading.Thread(target=load)
+        thread.daemon = True
+        thread.start()
+
+    def on_tile_loaded(self, provider, z, x, y, image):
+        """Called when a tile has been loaded"""
+        if provider == self.map_provider:
+            self.map_tiles[(z, x, y)] = image
+            self.Refresh()
+
+    def on_tile_load_complete(self, z, x, y):
+        """Called when tile loading is complete"""
+        self.tiles_loading.discard((z, x, y))
+
+    def update_geo_center(self):
+        """Update geographic center based on pan"""
+        width, height = self.GetSize()
+        center_x = width / 2
+        center_y = height / 2
+
+        # Calculate tile offset
+        tile_x, tile_y = self.lat_lon_to_tile(self.geo_center_lat,
+                                              self.geo_center_lon,
+                                              self.geo_zoom)
+
+        # Apply pan offset in tile coordinates
+        tile_offset_x = -self.pan_x / 256.0
+        tile_offset_y = -self.pan_y / 256.0
+
+        new_tile_x = tile_x + tile_offset_x
+        new_tile_y = tile_y + tile_offset_y
+
+        # Convert back to lat/lon
+        self.geo_center_lat, self.geo_center_lon = self.tile_to_lat_lon(
+            new_tile_x, new_tile_y, self.geo_zoom)
+        self.pan_x = 0
+        self.pan_y = 0
 
     def screen_to_world(self, x: float, y: float) -> Tuple[float, float]:
         """Convert screen coordinates to world coordinates"""
@@ -207,6 +406,10 @@ class MapCanvas(wx.Panel):
         # Set up coordinate system
         gc = wx.GraphicsContext.Create(dc)
 
+        # Draw map tiles if enabled
+        if self.map_provider != MapProvider.NONE and self.map_enabled:
+            self.draw_map_tiles(gc)
+
         # Draw grid
         self.draw_grid(gc)
 
@@ -222,9 +425,74 @@ class MapCanvas(wx.Panel):
         if self.mode == SelectionMode.RECTANGLE_SELECT and self.selection_rect_start and self.current_mouse_pos:
             self.draw_selection_rectangle(gc)
 
+    def draw_map_tiles(self, gc):
+        """Draw map tiles as background"""
+        width, height = self.GetSize()
+
+        # Calculate which tiles we need
+        tile_size = 256
+
+        # Get center tile
+        center_tile_x, center_tile_y = self.lat_lon_to_tile(
+            self.geo_center_lat, self.geo_center_lon, self.geo_zoom
+        )
+
+        # Calculate visible tile range
+        tiles_x = math.ceil(width / tile_size) + 2
+        tiles_y = math.ceil(height / tile_size) + 2
+
+        # Calculate offset for smooth panning
+        frac_x = center_tile_x - math.floor(center_tile_x)
+        frac_y = center_tile_y - math.floor(center_tile_y)
+        offset_x = -frac_x * tile_size + width / 2 + self.pan_x
+        offset_y = -frac_y * tile_size + height / 2 + self.pan_y
+
+        # Draw tiles
+        start_tile_x = int(center_tile_x) - tiles_x // 2
+        start_tile_y = int(center_tile_y) - tiles_y // 2
+
+        for dy in range(tiles_y):
+            for dx in range(tiles_x):
+                tile_x = start_tile_x + dx
+                tile_y = start_tile_y + dy
+
+                # Skip invalid tiles
+                max_tile = 2 ** self.geo_zoom
+                if tile_x < 0 or tile_x >= max_tile or tile_y < 0 or tile_y >= max_tile:
+                    continue
+
+                # Calculate screen position
+                screen_x = offset_x + (dx - tiles_x // 2) * tile_size
+                screen_y = offset_y + (dy - tiles_y // 2) * tile_size
+
+                # Get or load tile
+                tile_key = (self.geo_zoom, tile_x, tile_y)
+                if tile_key in self.map_tiles:
+                    # Draw tile
+                    image = self.map_tiles[tile_key]
+                    bitmap = wx.Bitmap(image)
+                    gc.DrawBitmap(bitmap, screen_x, screen_y, tile_size,
+                                  tile_size)
+                else:
+                    # Draw placeholder and load tile
+                    gc.SetBrush(wx.Brush(wx.Colour(240, 240, 240)))
+                    gc.SetPen(wx.Pen(wx.Colour(200, 200, 200), 1))
+                    gc.DrawRectangle(screen_x, screen_y, tile_size,
+                                     tile_size)
+
+                    # Load tile if not already loading
+                    if tile_key not in self.tiles_loading:
+                        self.tiles_loading.add(tile_key)
+                        self.load_tile_async(self.map_provider,
+                                             self.geo_zoom, tile_x, tile_y)
+
     def draw_grid(self, gc):
         """Draw background grid"""
-        gc.SetPen(wx.Pen(wx.Colour(220, 220, 220), 1))
+        # Only draw grid if no map or with transparency
+        if self.map_provider == MapProvider.NONE:
+            gc.SetPen(wx.Pen(wx.Colour(220, 220, 220), 1))
+        else:
+            gc.SetPen(wx.Pen(wx.Colour(100, 100, 100, 50), 1))
 
         width, height = self.GetSize()
         grid_size = 50 * self.zoom_level
@@ -456,6 +724,18 @@ class MapCanvas(wx.Panel):
         self.pan_x += mx - new_mx
         self.pan_y += my - new_my
 
+        # Update map zoom level if needed
+        if self.map_provider != MapProvider.NONE:
+            # Adjust geo zoom based on canvas zoom
+            if self.zoom_level > 2.0 and self.geo_zoom < 18:
+                self.geo_zoom += 1
+                self.map_tiles.clear()
+                self.zoom_level /= 2
+            elif self.zoom_level < 0.5 and self.geo_zoom > 10:
+                self.geo_zoom -= 1
+                self.map_tiles.clear()
+                self.zoom_level *= 2
+
         self.Refresh()
 
     def on_size(self, event):
@@ -506,6 +786,128 @@ class MapCanvas(wx.Panel):
         self.pan_y = height / 2 - center_y * self.zoom_level
 
         self.Refresh()
+
+
+class BasemapDialog(wx.Dialog):
+    """Dialog for selecting and configuring basemap"""
+
+    def __init__(self, parent, current_provider, map_enabled, lat, lon):
+        super().__init__(parent, title="Select Basemap", size=(400, 300))
+
+        self.provider = current_provider
+        self.enabled = map_enabled
+        self.lat = lat
+        self.lon = lon
+
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Map enabled checkbox
+        self.enable_cb = wx.CheckBox(panel, label="Enable Basemap")
+        self.enable_cb.SetValue(self.enabled)
+        self.enable_cb.Bind(wx.EVT_CHECKBOX, self.on_enable_changed)
+        sizer.Add(self.enable_cb, 0, wx.ALL, 10)
+
+        # Map provider selection
+        provider_box = wx.StaticBox(panel, label="Map Provider")
+        provider_sizer = wx.StaticBoxSizer(provider_box, wx.VERTICAL)
+
+        self.provider_radios = []
+        for provider in MapProvider:
+            if provider != MapProvider.NONE:
+                radio = wx.RadioButton(panel, label=provider.value,
+                                       style=wx.RB_SINGLE if provider == MapProvider.OSM else 0)
+                radio.SetValue(provider == self.provider)
+                radio.Bind(wx.EVT_RADIOBUTTON,
+                           lambda e, p=provider: self.on_provider_changed(
+                               p))
+                provider_sizer.Add(radio, 0, wx.ALL, 5)
+                self.provider_radios.append(radio)
+
+        sizer.Add(provider_sizer, 0, wx.EXPAND | wx.ALL, 10)
+
+        # Location settings
+        location_box = wx.StaticBox(panel, label="Map Center Location")
+        location_sizer = wx.StaticBoxSizer(location_box, wx.VERTICAL)
+
+        # Latitude
+        lat_box = wx.BoxSizer(wx.HORIZONTAL)
+        lat_box.Add(wx.StaticText(panel, label="Latitude:"), 0,
+                    wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        self.lat_ctrl = wx.TextCtrl(panel, value=f"{self.lat:.6f}")
+        lat_box.Add(self.lat_ctrl, 1, wx.EXPAND)
+        location_sizer.Add(lat_box, 0, wx.EXPAND | wx.ALL, 5)
+
+        # Longitude
+        lon_box = wx.BoxSizer(wx.HORIZONTAL)
+        lon_box.Add(wx.StaticText(panel, label="Longitude:"), 0,
+                    wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        self.lon_ctrl = wx.TextCtrl(panel, value=f"{self.lon:.6f}")
+        lon_box.Add(self.lon_ctrl, 1, wx.EXPAND)
+        location_sizer.Add(lon_box, 0, wx.EXPAND | wx.ALL, 5)
+
+        # Quick location buttons
+        quick_loc_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        locations = [
+            ("New York", 40.7128, -74.0060),
+            ("London", 51.5074, -0.1278),
+            ("Tokyo", 35.6762, 139.6503),
+            ("Berlin", 52.5200, 13.4050),
+        ]
+
+        for name, lat, lon in locations:
+            btn = wx.Button(panel, label=name, size=(70, -1))
+            btn.Bind(wx.EVT_BUTTON,
+                     lambda e, la=lat, lo=lon: self.set_location(la, lo))
+            quick_loc_sizer.Add(btn, 0, wx.ALL, 2)
+
+        location_sizer.Add(quick_loc_sizer, 0, wx.ALL, 5)
+        sizer.Add(location_sizer, 0, wx.EXPAND | wx.ALL, 10)
+
+        # Update radio button states based on enable checkbox
+        self.update_radio_states()
+
+        # Buttons
+        btn_sizer = wx.StdDialogButtonSizer()
+        ok_btn = wx.Button(panel, wx.ID_OK)
+        cancel_btn = wx.Button(panel, wx.ID_CANCEL)
+        btn_sizer.AddButton(ok_btn)
+        btn_sizer.AddButton(cancel_btn)
+        btn_sizer.Realize()
+        sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
+
+        panel.SetSizer(sizer)
+
+    def on_enable_changed(self, event):
+        """Handle enable checkbox change"""
+        self.enabled = self.enable_cb.GetValue()
+        self.update_radio_states()
+
+    def update_radio_states(self):
+        """Enable/disable radio buttons based on checkbox"""
+        for radio in self.provider_radios:
+            radio.Enable(self.enabled)
+
+    def on_provider_changed(self, provider):
+        """Handle provider selection change"""
+        self.provider = provider
+
+    def set_location(self, lat, lon):
+        """Set location in text controls"""
+        self.lat_ctrl.SetValue(f"{lat:.6f}")
+        self.lon_ctrl.SetValue(f"{lon:.6f}")
+
+    def get_values(self):
+        """Get the current values"""
+        try:
+            lat = float(self.lat_ctrl.GetValue())
+            lon = float(self.lon_ctrl.GetValue())
+        except ValueError:
+            lat = self.lat
+            lon = self.lon
+
+        return self.provider if self.enabled else MapProvider.NONE, self.enabled, lat, lon
 
 
 class HeightDialog(wx.Dialog):
@@ -620,11 +1022,13 @@ class MainFrame(wx.Frame):
 
         # Edit menu
         edit_menu = wx.Menu()
-        edit_menu.Append(wx.ID_ANY, "Select &Basemap", "Choose a basemap")
-        edit_menu.Append(wx.ID_ANY, "&Zoom to Buildings\tCtrl+0",
-                         "Zoom to fit all buildings")
-        edit_menu.Append(wx.ID_ANY, "Set Storey &Height",
-                         "Set the height per storey")
+        basemap_item = edit_menu.Append(wx.ID_ANY, "Select &Basemap",
+                                        "Choose a basemap")
+        zoom_item = edit_menu.Append(wx.ID_ANY,
+                                     "&Zoom to Buildings\tCtrl+0",
+                                     "Zoom to fit all buildings")
+        storey_item = edit_menu.Append(wx.ID_ANY, "Set Storey &Height",
+                                       "Set the height per storey")
 
         # Help menu
         help_menu = wx.Menu()
@@ -645,10 +1049,12 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_about, id=wx.ID_ABOUT)
 
         # Bind edit menu events
+        self.Bind(wx.EVT_MENU, self.on_select_basemap,
+                  id=basemap_item.GetId())
         self.Bind(wx.EVT_MENU, self.on_zoom_to_buildings,
-                  id=edit_menu.FindItem("&Zoom to Buildings\tCtrl+0"))
+                  id=zoom_item.GetId())
         self.Bind(wx.EVT_MENU, self.on_set_storey_height,
-                  id=edit_menu.FindItem("Set Storey &Height"))
+                  id=storey_item.GetId())
 
     def create_toolbar(self):
         """Create the toolbar"""
@@ -797,6 +1203,39 @@ class MainFrame(wx.Frame):
         self.canvas.zoom_to_buildings()
         self.SetStatusText("Zoomed to fit all buildings")
 
+    def on_select_basemap(self, event):
+        """Open basemap selection dialog"""
+        dialog = BasemapDialog(
+            self,
+            self.canvas.map_provider,
+            self.canvas.map_enabled,
+            self.canvas.geo_center_lat,
+            self.canvas.geo_center_lon
+        )
+
+        if dialog.ShowModal() == wx.ID_OK:
+            provider, enabled, lat, lon = dialog.get_values()
+
+            # Update canvas settings
+            self.canvas.map_provider = provider
+            self.canvas.map_enabled = enabled
+            self.canvas.geo_center_lat = lat
+            self.canvas.geo_center_lon = lon
+
+            # Clear tile cache if provider changed
+            if provider != self.canvas.map_provider:
+                self.canvas.map_tiles.clear()
+                self.canvas.tiles_loading.clear()
+
+            self.canvas.Refresh()
+
+            if enabled and provider != MapProvider.NONE:
+                self.SetStatusText(f"Basemap: {provider.value}")
+            else:
+                self.SetStatusText("Basemap disabled")
+
+        dialog.Destroy()
+
     def on_set_storey_height(self, event):
         """Set the height per storey"""
         dialog = wx.TextEntryDialog(
@@ -897,6 +1336,32 @@ class MainFrame(wx.Frame):
             # Clear current buildings
             self.canvas.buildings.clear()
 
+            # Load metadata if available
+            metadata = data.get('metadata', {})
+            creator_settings = metadata.get('cityjson_creator_settings',
+                                            {})
+            if creator_settings:
+                # Restore map settings
+                map_provider_str = creator_settings.get('map_provider',
+                                                        'None')
+                for provider in MapProvider:
+                    if provider.value == map_provider_str:
+                        self.canvas.map_provider = provider
+                        break
+
+                self.canvas.map_enabled = creator_settings.get(
+                    'map_enabled', True)
+                self.canvas.geo_center_lat = creator_settings.get(
+                    'geo_center_lat', 49.4875)
+                self.canvas.geo_center_lon = creator_settings.get(
+                    'geo_center_lon', 8.4660)
+                self.canvas.geo_zoom = creator_settings.get('geo_zoom', 16)
+                self.canvas.storey_height = creator_settings.get(
+                    'storey_height', 3.3)
+
+                # Clear map tiles to reload with new settings
+                self.canvas.map_tiles.clear()
+
             # Load vertices
             vertices = data.get('vertices', [])
 
@@ -918,16 +1383,22 @@ class MainFrame(wx.Frame):
                                 ys = [vertices[i][1] for i in v_indices]
                                 zs = [vertices[i][2] for i in v_indices]
 
+                                # Get attributes
+                                attrs = obj_data.get('attributes', {})
+                                height = attrs.get('height', max(zs) - min(
+                                    zs) if zs else 10.0)
+                                stories = attrs.get('stories', max(1,
+                                                                   round(
+                                                                       height / self.canvas.storey_height)))
+
                                 building = Building(
                                     id=obj_id,
                                     x1=min(xs),
                                     y1=min(ys),
                                     x2=max(xs),
                                     y2=max(ys),
-                                    height=max(zs) - min(
-                                        zs) if zs else 10.0,
-                                    stories=max(1, round((max(zs) - min(
-                                        zs)) / self.canvas.storey_height))
+                                    height=height,
+                                    stories=stories
                                 )
                                 self.canvas.buildings.append(building)
 
@@ -984,10 +1455,35 @@ class MainFrame(wx.Frame):
                     }]
                 }
 
-            # Create CityJSON structure
+            # Create CityJSON structure with metadata
             cityjson = {
                 "type": "CityJSON",
                 "version": "1.1",
+                "metadata": {
+                    "geographicalExtent": [
+                        min(v[0] for v in
+                            all_vertices) if all_vertices else 0,
+                        min(v[1] for v in
+                            all_vertices) if all_vertices else 0,
+                        min(v[2] for v in
+                            all_vertices) if all_vertices else 0,
+                        max(v[0] for v in
+                            all_vertices) if all_vertices else 0,
+                        max(v[1] for v in
+                            all_vertices) if all_vertices else 0,
+                        max(v[2] for v in
+                            all_vertices) if all_vertices else 0,
+                    ],
+                    "referenceSystem": f"https://www.opengis.net/def/crs/EPSG/0/4326",
+                    "cityjson_creator_settings": {
+                        "map_provider": self.canvas.map_provider.value,
+                        "map_enabled": self.canvas.map_enabled,
+                        "geo_center_lat": self.canvas.geo_center_lat,
+                        "geo_center_lon": self.canvas.geo_center_lon,
+                        "geo_zoom": self.canvas.geo_zoom,
+                        "storey_height": self.canvas.storey_height
+                    }
+                },
                 "CityObjects": city_objects,
                 "vertices": all_vertices
             }
@@ -1033,6 +1529,11 @@ Library Versions:
 - Python: {sys.version.split()[0]}
 - NumPy: {np.__version__}
 
+Map Data Sources:
+- OpenStreetMap: © OpenStreetMap contributors
+- Satellite: © Esri World Imagery
+- Terrain: © OpenTopoMap (CC-BY-SA)
+
 © 2024 - Created with Claude"""
 
         wx.MessageBox(info, "About CityJSON Creator",
@@ -1050,3 +1551,36 @@ class CityJSONApp(wx.App):
 if __name__ == '__main__':
     app = CityJSONApp()
     app.MainLoop()
+
+    # # Edit menu
+    # edit_menu = wx.Menu()
+    # basemap_item = edit_menu.Append(wx.ID_ANY, "Select &Basemap",
+    #                                 "Choose a basemap")
+    # zoom_item = edit_menu.Append(wx.ID_ANY, "&Zoom to Buildings\tCtrl+0",
+    #                              "Zoom to fit all buildings")
+    # storey_item = edit_menu.Append(wx.ID_ANY, "Set Storey &Height",
+    #                                "Set the height per storey")
+    #
+    # # Help menu
+    # help_menu = wx.Menu()
+    # help_menu.Append(wx.ID_ABOUT, "&About", "About this application")
+    #
+    # menubar.Append(file_menu, "&File")
+    # menubar.Append(edit_menu, "&Edit")
+    # menubar.Append(help_menu, "&Help")
+    #
+    # self.SetMenuBar(menubar)
+    #
+    # # Bind menu events
+    # self.Bind(wx.EVT_MENU, self.on_new, id=wx.ID_NEW)
+    # self.Bind(wx.EVT_MENU, self.on_open, id=wx.ID_OPEN)
+    # self.Bind(wx.EVT_MENU, self.on_save, id=wx.ID_SAVE)
+    # self.Bind(wx.EVT_MENU, self.on_save_as, id=wx.ID_SAVEAS)
+    # self.Bind(wx.EVT_MENU, self.on_exit, id=wx.ID_EXIT)
+    # self.Bind(wx.EVT_MENU, self.on_about, id=wx.ID_ABOUT)
+    #
+    # # Bind edit menu events
+    # self.Bind(wx.EVT_MENU, self.on_select_basemap, id=basemap_item.GetId())
+    # self.Bind(wx.EVT_MENU, self.on_zoom_to_buildings, id=zoom_item.GetId())
+    # self.Bind(wx.EVT_MENU, self.on_set_storey_height,
+    #           id=storey_item.GetId())
