@@ -792,7 +792,7 @@ class BasemapDialog(wx.Dialog):
     """Dialog for selecting and configuring basemap"""
 
     def __init__(self, parent, current_provider, map_enabled, lat, lon):
-        super().__init__(parent, title="Select Basemap", size=(400, 300))
+        super().__init__(parent, title="Select Basemap", size=(450, 420))
 
         self.provider = current_provider
         self.enabled = map_enabled
@@ -824,7 +824,7 @@ class BasemapDialog(wx.Dialog):
                 provider_sizer.Add(radio, 0, wx.ALL, 5)
                 self.provider_radios.append(radio)
 
-        sizer.Add(provider_sizer, 0, wx.EXPAND | wx.ALL, 10)
+        sizer.Add(provider_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
 
         # Location settings
         location_box = wx.StaticBox(panel, label="Map Center Location")
@@ -832,22 +832,25 @@ class BasemapDialog(wx.Dialog):
 
         # Latitude
         lat_box = wx.BoxSizer(wx.HORIZONTAL)
-        lat_box.Add(wx.StaticText(panel, label="Latitude:"), 0,
-                    wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        lat_label = wx.StaticText(panel, label="Latitude:", size=(80, -1))
+        lat_box.Add(lat_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
         self.lat_ctrl = wx.TextCtrl(panel, value=f"{self.lat:.6f}")
         lat_box.Add(self.lat_ctrl, 1, wx.EXPAND)
         location_sizer.Add(lat_box, 0, wx.EXPAND | wx.ALL, 5)
 
         # Longitude
         lon_box = wx.BoxSizer(wx.HORIZONTAL)
-        lon_box.Add(wx.StaticText(panel, label="Longitude:"), 0,
-                    wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        lon_label = wx.StaticText(panel, label="Longitude:", size=(80, -1))
+        lon_box.Add(lon_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
         self.lon_ctrl = wx.TextCtrl(panel, value=f"{self.lon:.6f}")
         lon_box.Add(self.lon_ctrl, 1, wx.EXPAND)
         location_sizer.Add(lon_box, 0, wx.EXPAND | wx.ALL, 5)
 
-        # Quick location buttons
-        quick_loc_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        # Quick location buttons - arranged in 2x2 grid
+        quick_label = wx.StaticText(panel, label="Quick Locations:")
+        location_sizer.Add(quick_label, 0, wx.LEFT | wx.TOP, 5)
+
+        quick_grid = wx.GridSizer(2, 2, 5, 5)
 
         locations = [
             ("New York", 40.7128, -74.0060),
@@ -857,13 +860,17 @@ class BasemapDialog(wx.Dialog):
         ]
 
         for name, lat, lon in locations:
-            btn = wx.Button(panel, label=name, size=(70, -1))
+            btn = wx.Button(panel, label=name, size=(90, 28))
             btn.Bind(wx.EVT_BUTTON,
                      lambda e, la=lat, lo=lon: self.set_location(la, lo))
-            quick_loc_sizer.Add(btn, 0, wx.ALL, 2)
+            quick_grid.Add(btn, 0, wx.EXPAND)
 
-        location_sizer.Add(quick_loc_sizer, 0, wx.ALL, 5)
-        sizer.Add(location_sizer, 0, wx.EXPAND | wx.ALL, 10)
+        location_sizer.Add(quick_grid, 0, wx.ALL | wx.EXPAND, 5)
+        sizer.Add(location_sizer, 0,
+                  wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+
+        # Add some spacing
+        sizer.Add((-1, 10))
 
         # Update radio button states based on enable checkbox
         self.update_radio_states()
@@ -878,6 +885,9 @@ class BasemapDialog(wx.Dialog):
         sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
 
         panel.SetSizer(sizer)
+
+        # Center the dialog
+        self.Centre()
 
     def on_enable_changed(self, event):
         """Handle enable checkbox change"""
@@ -908,7 +918,6 @@ class BasemapDialog(wx.Dialog):
             lon = self.lon
 
         return self.provider if self.enabled else MapProvider.NONE, self.enabled, lat, lon
-
 
 class HeightDialog(wx.Dialog):
     """Dialog for setting building height"""
