@@ -198,9 +198,12 @@ class Building:
 class MapCanvas(wx.Panel):
     """The main canvas for displaying and editing buildings"""
 
+    BASE_TILE_SIZE = 256
+
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
+        self.statusbar = None
 
         # State
         self.buildings: List[Building] = []
@@ -367,6 +370,7 @@ class MapCanvas(wx.Panel):
     def on_tile_load_complete(self, z, x, y):
         """Called when tile loading is complete"""
         self.tiles_loading.discard((z, x, y))
+        wx.EndBusyCursor()
 
     def on_paint(self, event):
         """Handle paint events"""
@@ -384,6 +388,12 @@ class MapCanvas(wx.Panel):
         # Draw grid
         self.draw_grid(gc)
 
+        if self.statusbar is not None:
+            self.statusbar.SetStatusText(
+                f"Zoom level {self.geo_zoom:2d}  "
+                f"factor {self.zoom_level:3.2f} "
+                f"Pan: {self.pan_x:7.1f} {self.pan_y:7.1f}",  i=1)
+
         # Draw buildings
         for building in self.buildings:
             self.draw_building(gc, building)
@@ -399,7 +409,7 @@ class MapCanvas(wx.Panel):
     def draw_map_tiles(self, dc):
         """Draw map tiles as background"""
         width, height = self.GetSize()
-        tile_size = 256 * self.zoom_level
+        tile_size = self.BASE_TILE_SIZE * self.zoom_level * 2**16/( 2**self.geo_zoom)
 
         center_tile_x, center_tile_y = self.lat_lon_to_tile(
             self.geo_center_lat, self.geo_center_lon, self.geo_zoom
@@ -411,13 +421,14 @@ class MapCanvas(wx.Panel):
         frac_x = center_tile_x - math.floor(center_tile_x)
         frac_y = center_tile_y - math.floor(center_tile_y)
 
-        center_x, center_y = self.world_to_screen(0.,0.)
+        center_x, center_y = self.world_to_screen(width/2,height/2)
 
         offset_x = -frac_x * tile_size + center_x
         offset_y = -frac_y * tile_size + center_y
 
         start_tile_x = int(center_tile_x) - tiles_x // 2 - int(offset_x / tile_size)
         start_tile_y = int(center_tile_y) - tiles_y // 2 - int(offset_y / tile_size)
+
 
         for dy in range(tiles_y):
             for dx in range(tiles_x):
@@ -445,6 +456,7 @@ class MapCanvas(wx.Panel):
                                      int(tile_size), int(tile_size))
 
                     if tile_key not in self.tiles_loading:
+                        wx.BeginBusyCursor()
                         self.tiles_loading.add(tile_key)
                         self.load_tile_async(self.map_provider,
                                              self.geo_zoom, tile_x, tile_y)
@@ -1038,8 +1050,11 @@ class MainFrame(wx.Frame):
         sizer.Add(self.canvas, 1, wx.EXPAND)
 
         # Status bar
-        self.CreateStatusBar()
+        statusbar = self.CreateStatusBar()
+        statusbar.SetFieldsCount(3)
+        statusbar.SetStatusWidths([-2,-4,-1])
         self.SetStatusText("Ready")
+        self.canvas.statusbar = statusbar
 
         panel.SetSizer(sizer)
 
