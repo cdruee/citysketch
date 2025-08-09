@@ -399,22 +399,25 @@ class MapCanvas(wx.Panel):
     def draw_map_tiles(self, dc):
         """Draw map tiles as background"""
         width, height = self.GetSize()
-        tile_size = 256
+        tile_size = 256 * self.zoom_level
 
         center_tile_x, center_tile_y = self.lat_lon_to_tile(
             self.geo_center_lat, self.geo_center_lon, self.geo_zoom
         )
 
-        tiles_x = math.ceil(width / tile_size) + 2
-        tiles_y = math.ceil(height / tile_size) + 2
+        tiles_x = math.ceil(width / tile_size) + 4
+        tiles_y = math.ceil(height / tile_size) + 4
 
         frac_x = center_tile_x - math.floor(center_tile_x)
         frac_y = center_tile_y - math.floor(center_tile_y)
-        offset_x = -frac_x * tile_size + width / 2 + self.pan_x
-        offset_y = -frac_y * tile_size + height / 2 + self.pan_y
 
-        start_tile_x = int(center_tile_x) - tiles_x // 2
-        start_tile_y = int(center_tile_y) - tiles_y // 2
+        center_x, center_y = self.world_to_screen(0.,0.)
+
+        offset_x = -frac_x * tile_size + center_x
+        offset_y = -frac_y * tile_size + center_y
+
+        start_tile_x = int(center_tile_x) - tiles_x // 2 - int(offset_x / tile_size)
+        start_tile_y = int(center_tile_y) - tiles_y // 2 - int(offset_y / tile_size)
 
         for dy in range(tiles_y):
             for dx in range(tiles_x):
@@ -425,19 +428,21 @@ class MapCanvas(wx.Panel):
                 if tile_x < 0 or tile_x >= max_tile or tile_y < 0 or tile_y >= max_tile:
                     continue
 
-                screen_x = offset_x + (dx - tiles_x // 2) * tile_size
-                screen_y = offset_y + (dy - tiles_y // 2) * tile_size
+                screen_x = offset_x + (dx - tiles_x // 2 - int(offset_x / tile_size) ) * tile_size
+                screen_y = offset_y + (dy - tiles_y // 2 - int(offset_y / tile_size)) * tile_size
 
                 tile_key = (self.geo_zoom, tile_x, tile_y)
                 if tile_key in self.map_tiles:
                     image = self.map_tiles[tile_key]
-                    bitmap = wx.Bitmap(image)
+                    scaled = image.Scale(int(tile_size), int(tile_size),
+                                        wx.IMAGE_QUALITY_HIGH)
+                    bitmap = wx.Bitmap(scaled)
                     dc.DrawBitmap(bitmap, int(screen_x), int(screen_y))
                 else:
                     dc.SetBrush(wx.Brush(wx.Colour(240, 240, 240)))
                     dc.SetPen(wx.Pen(wx.Colour(200, 200, 200), 1))
                     dc.DrawRectangle(int(screen_x), int(screen_y),
-                                     tile_size, tile_size)
+                                     int(tile_size), int(tile_size))
 
                     if tile_key not in self.tiles_loading:
                         self.tiles_loading.add(tile_key)
@@ -670,6 +675,7 @@ class MapCanvas(wx.Panel):
                 self.map_tiles.clear()
                 self.zoom_level *= 2
 
+        print(self.pan_x, self.pan_y)
         self.Refresh()
 
     def on_size(self, event):
