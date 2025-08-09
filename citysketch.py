@@ -199,6 +199,7 @@ class MapCanvas(wx.Panel):
     """The main canvas for displaying and editing buildings"""
 
     BASE_TILE_SIZE = 256
+    BASE_GEO_ZOOM = 16
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -223,7 +224,7 @@ class MapCanvas(wx.Panel):
         # Geographic coordinates (center of view)
         self.geo_center_lat = 49.4875  # Default: Ludwigshafen area
         self.geo_center_lon = 8.4660
-        self.geo_zoom = 16  # Tile zoom level
+        self.geo_zoom = self.BASE_GEO_ZOOM  # Tile zoom level
 
         # Interaction state
         self.mouse_down = False
@@ -353,7 +354,8 @@ class MapCanvas(wx.Panel):
                         wx.CallAfter(self.on_tile_loaded, provider, z, x,
                                      y, image)
             except Exception as e:
-                print(f"Failed to load tile {z}/{x}/{y}: {e}")
+                self.statusbar.SetStatusText(
+                    f"Failed to load tile {z}/{x}/{y}: {e}")
             finally:
                 wx.CallAfter(self.on_tile_load_complete, z, x, y)
 
@@ -388,6 +390,11 @@ class MapCanvas(wx.Panel):
         # Draw grid
         self.draw_grid(gc)
 
+        self.geo_zoom = 11
+        while (self.zoom_level > 2.**self.geo_zoom / 2.**self.BASE_GEO_ZOOM
+                and self.geo_zoom < 18):
+            self.geo_zoom += 1
+
         if self.statusbar is not None:
             self.statusbar.SetStatusText(
                 f"Zoom level {self.geo_zoom:2d}  "
@@ -415,32 +422,34 @@ class MapCanvas(wx.Panel):
             self.geo_center_lat, self.geo_center_lon, self.geo_zoom
         )
 
-        tiles_x = math.ceil(width / tile_size) + 4
-        tiles_y = math.ceil(height / tile_size) + 4
+        floor_x = math.floor(center_tile_x)
+        floor_y = math.floor(center_tile_y)
+        frac_x = center_tile_x - floor_x
+        frac_y = center_tile_y - floor_y
 
-        frac_x = center_tile_x - math.floor(center_tile_x)
-        frac_y = center_tile_y - math.floor(center_tile_y)
-
-        center_x, center_y = self.world_to_screen(width/2,height/2)
+        center_x, center_y = self.world_to_screen(0,0 )
 
         offset_x = -frac_x * tile_size + center_x
         offset_y = -frac_y * tile_size + center_y
 
-        start_tile_x = int(center_tile_x) - tiles_x // 2 - int(offset_x / tile_size)
-        start_tile_y = int(center_tile_y) - tiles_y // 2 - int(offset_y / tile_size)
+        tiles_x = math.ceil(width / tile_size) + 1
+        tiles_y = math.ceil(height / tile_size) + 1
+
+        #start_tile_x = floor_x - 1 # tiles_x // 2
+        #start_tile_y = floor_y - 1 # tiles_y // 2
+        start_tile_x = floor_x - math.ceil( offset_x / tile_size)
+        start_tile_y = floor_y - math.ceil( offset_y / tile_size)
 
 
-        for dy in range(tiles_y):
-            for dx in range(tiles_x):
-                tile_x = start_tile_x + dx
-                tile_y = start_tile_y + dy
+        for tile_y in range(start_tile_y, start_tile_y + tiles_y):
+            for tile_x in range(start_tile_x, start_tile_x + tiles_x):
 
                 max_tile = 2 ** self.geo_zoom
                 if tile_x < 0 or tile_x >= max_tile or tile_y < 0 or tile_y >= max_tile:
                     continue
 
-                screen_x = offset_x + (dx - tiles_x // 2 - int(offset_x / tile_size) ) * tile_size
-                screen_y = offset_y + (dy - tiles_y // 2 - int(offset_y / tile_size)) * tile_size
+                screen_x = offset_x + (tile_x - floor_x) * tile_size
+                screen_y = offset_y + (tile_y - floor_y) * tile_size
 
                 tile_key = (self.geo_zoom, tile_x, tile_y)
                 if tile_key in self.map_tiles:
@@ -677,17 +686,21 @@ class MapCanvas(wx.Panel):
         self.pan_x += mx - new_mx
         self.pan_y += my - new_my
 
-        if self.map_provider != MapProvider.NONE:
-            if self.zoom_level > 2.0 and self.geo_zoom < 18:
-                self.geo_zoom += 1
-                self.map_tiles.clear()
-                self.zoom_level /= 2
-            elif self.zoom_level < 0.5 and self.geo_zoom > 10:
-                self.geo_zoom -= 1
-                self.map_tiles.clear()
-                self.zoom_level *= 2
+        # if self.map_provider != MapProvider.NONE:
+        #     while self.zoom_level > 2.0 and self.geo_zoom < 18:
+        #         self.geo_zoom += 1
+        #         self.zoom_level /= 2
+        #         self.map_tiles.clear()
+        #     while self.zoom_level < 0.5 and self.geo_zoom > 10:
+        #         self.geo_zoom -= 1
+        #         self.zoom_level *= 2
+        #         self.map_tiles.clear()
+        #
+        #     wx, wy = self.screen_to_world(mx, my)
+        #     self.zoom_level = new_zoom
+        #     new_mx, new_my = self.world_to_screen(wx, wy)
+        #
 
-        print(self.pan_x, self.pan_y)
         self.Refresh()
 
     def on_size(self, event):
@@ -1155,8 +1168,6 @@ class MainFrame(wx.Frame):
 
         if dialog.ShowModal() == wx.ID_OK:
             provider, lat, lon = dialog.get_values()
-
-            print(provider, lat, lon)
 
             # Clear tile cache if provider changed
             if provider != self.canvas.map_provider:
