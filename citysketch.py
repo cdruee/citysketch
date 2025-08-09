@@ -26,6 +26,70 @@ import tempfile
 # Version info
 APP_VERSION = "1.0.0"
 
+def get_location_from_ip():
+    """
+    Get estimated latitude and longitude based on user's IP address.
+    Returns tuple of (latitude, longitude) or None if unable to determine.
+    """
+    try:
+        # Try multiple free IP geolocation services
+        services = [
+            "http://ip-api.com/json/?fields=status,lat,lon",
+            "https://ipapi.co/json/",
+            "https://geolocation-db.com/json/"
+        ]
+
+        for service_url in services:
+            try:
+                req = urllib.request.Request(service_url, headers={
+                    'User-Agent': 'CityJSON Creator/1.0'
+                })
+
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    data = json.loads(response.read().decode('utf-8'))
+
+                # Parse response based on service
+                if 'ip-api.com' in service_url:
+                    if data.get('status') == 'success':
+                        return data.get('lat'), data.get('lon')
+
+                elif 'ipapi.co' in service_url:
+                    lat = data.get('latitude')
+                    lon = data.get('longitude')
+                    if lat and lon:
+                        return lat, lon
+
+                elif 'geolocation-db.com' in service_url:
+                    lat = data.get('latitude')
+                    lon = data.get('longitude')
+                    if lat and lon and lat != "Not found":
+                        return lat, lon
+
+            except Exception as e:
+                print(f"Failed to get location from {service_url}: {e}")
+                continue
+
+        # If all services fail, return None
+        return None
+
+    except Exception as e:
+        print(f"Error getting IP location: {e}")
+        return None
+
+def get_location_with_fallback():
+    """
+    Get user location from IP with fallback to default location.
+    Returns (latitude, longitude) tuple.
+    """
+    location = get_location_from_ip()
+
+    if location and location[0] and location[1]:
+        print(f"Detected location: {location[0]:.4f}, {location[1]:.4f}")
+        return location
+    else:
+        # Fallback to default location (Camous II, Uni Trier, Germany)
+        print("Could not detect location, using default")
+        return (49.74795,6.67412)
 
 class SelectionMode(Enum):
     NORMAL = "normal"
@@ -187,6 +251,7 @@ class Building:
             [[0, 1, 2, 3]],  # bottom
             [[4, 7, 6, 5]],  # top
             [[0, 4, 5, 1]],  # front
+            [[0, 4, 5, 1]],  # front
             [[2, 6, 7, 3]],  # back
             [[0, 3, 7, 4]],  # left
             [[1, 5, 6, 2]],  # right
@@ -222,8 +287,9 @@ class MapCanvas(wx.Panel):
         self.map_tiles = {}  # (z,x,y): wx.Image
 
         # Geographic coordinates (center of view)
-        self.geo_center_lat = 49.4875  # Default: Ludwigshafen area
-        self.geo_center_lon = 8.4660
+        lat, lon = get_location_with_fallback()  # user IP location
+        self.geo_center_lat = lat
+        self.geo_center_lon = lon
         self.geo_zoom = self.BASE_GEO_ZOOM  # Tile zoom level
 
         # Interaction state
@@ -800,10 +866,10 @@ class BasemapDialog(wx.Dialog):
         quick_grid = wx.GridSizer(2, 2, 5, 5)
 
         locations = [
-            ("New York", 40.7128, -74.0060),
-            ("London", 51.5074, -0.1278),
-            ("Tokyo", 35.6762, 139.6503),
             ("Berlin", 52.5200, 13.4050),
+            ("Hannover", 52.3747, 9.7385),
+            ("Trier", 49.7523, 6.6370),
+            ("Mannheim", 49.4875, 8.4660),
         ]
 
         for name, lat, lon in locations:
