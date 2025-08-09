@@ -507,7 +507,8 @@ class MapCanvas(wx.Panel):
         gc.DrawRectangle(x1, y1, x2 - x1, y2 - y1)
 
         gc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
-                           wx.FONTWEIGHT_NORMAL))
+                           wx.FONTWEIGHT_NORMAL),
+                   wx.Colour(255, 255, 255))
         text = f"{building.stories}F"
         tw, th = gc.GetTextExtent(text)
         gc.DrawText(text, (x1 + x2) / 2 - tw / 2, (y1 + y2) / 2 - th / 2)
@@ -566,7 +567,6 @@ class MapCanvas(wx.Panel):
                 self.buildings.append(building)
                 self.first_corner = None
                 self.mode = SelectionMode.NORMAL
-                self.parent.add_building_btn.SetLabel("Add Building")
                 self.Refresh()
 
         elif self.mode == SelectionMode.NORMAL:
