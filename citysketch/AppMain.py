@@ -4,104 +4,25 @@ CityJSON Creator Application
 A wxPython GUI application for creating and editing CityJSON files with building data.
 """
 
-import wx
-import wx.lib.scrolledpanel as scrolled
+import io
 import json
 import math
-import sys
-import numpy as np
-from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Set, Dict
-from enum import Enum
-import uuid
-import urllib.request
-import urllib.parse
-import threading
-import io
-from collections import OrderedDict
-import hashlib
 import os
+import sys
 import tempfile
+import threading
+import urllib.parse
+import urllib.request
+import uuid
+from typing import List, Tuple, Optional
 
-# Version info
-APP_VERSION = "1.0.0"
+import numpy as np
+import wx
 
-def get_location_from_ip():
-    """
-    Get estimated latitude and longitude based on user's IP address.
-    Returns tuple of (latitude, longitude) or None if unable to determine.
-    """
-    try:
-        # Try multiple free IP geolocation services
-        services = [
-            "http://ip-api.com/json/?fields=status,lat,lon",
-            "https://ipapi.co/json/",
-            "https://geolocation-db.com/json/"
-        ]
-
-        for service_url in services:
-            try:
-                req = urllib.request.Request(service_url, headers={
-                    'User-Agent': 'CityJSON Creator/1.0'
-                })
-
-                with urllib.request.urlopen(req, timeout=3) as response:
-                    data = json.loads(response.read().decode('utf-8'))
-
-                # Parse response based on service
-                if 'ip-api.com' in service_url:
-                    if data.get('status') == 'success':
-                        return data.get('lat'), data.get('lon')
-
-                elif 'ipapi.co' in service_url:
-                    lat = data.get('latitude')
-                    lon = data.get('longitude')
-                    if lat and lon:
-                        return lat, lon
-
-                elif 'geolocation-db.com' in service_url:
-                    lat = data.get('latitude')
-                    lon = data.get('longitude')
-                    if lat and lon and lat != "Not found":
-                        return lat, lon
-
-            except Exception as e:
-                print(f"Failed to get location from {service_url}: {e}")
-                continue
-
-        # If all services fail, return None
-        return None
-
-    except Exception as e:
-        print(f"Error getting IP location: {e}")
-        return None
-
-def get_location_with_fallback():
-    """
-    Get user location from IP with fallback to default location.
-    Returns (latitude, longitude) tuple.
-    """
-    location = get_location_from_ip()
-
-    if location and location[0] and location[1]:
-        print(f"Detected location: {location[0]:.4f}, {location[1]:.4f}")
-        return location
-    else:
-        # Fallback to default location (Camous II, Uni Trier, Germany)
-        print("Could not detect location, using default")
-        return (49.74795,6.67412)
-
-class SelectionMode(Enum):
-    NORMAL = "normal"
-    ADD_BUILDING = "add_building"
-    RECTANGLE_SELECT = "rectangle_select"
-
-
-class MapProvider(Enum):
-    NONE = "None"
-    OSM = "OpenStreetMap"
-    SATELLITE = "Satellite"
-    TERRAIN = "Terrain"
+from AppDialogs import BasemapDialog, HeightDialog
+from custom_types import SelectionMode, MapProvider, Building
+from utils import get_location_with_fallback
+from _version import __version__ as APP_VERSION
 
 
 class TileCache:
@@ -170,94 +91,6 @@ class TileCache:
             return image
         except:
             return None
-
-
-@dataclass
-class Building:
-    """Represents a building with its properties"""
-    id: str
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    height: float = 10.0  # meters
-    stories: int = 3
-    selected: bool = False
-
-    def __post_init__(self):
-        # Ensure x1,y1 is bottom-left and x2,y2 is top-right
-        if self.x1 > self.x2:
-            self.x1, self.x2 = self.x2, self.x1
-        if self.y1 > self.y2:
-            self.y1, self.y2 = self.y2, self.y1
-
-    def contains_point(self, x: float, y: float) -> bool:
-        """Check if a point is inside the building"""
-        return self.x1 <= x <= self.x2 and self.y1 <= y <= self.y2
-
-    def get_corner_index(self, x: float, y: float,
-                         threshold: float = 10) -> Optional[int]:
-        """Get which corner is near the point (0-3), None if no corner"""
-        corners = self.get_corners()
-        for i, (cx, cy) in enumerate(corners):
-            if math.sqrt((x - cx) ** 2 + (y - cy) ** 2) < threshold:
-                return i
-        return None
-
-    def get_corners(self) -> List[Tuple[float, float]]:
-        """Get all four corners"""
-        return [
-            (self.x1, self.y1),  # 0: bottom-left
-            (self.x2, self.y1),  # 1: bottom-right
-            (self.x2, self.y2),  # 2: top-right
-            (self.x1, self.y2),  # 3: top-left
-        ]
-
-    def move_corner(self, corner_index: int, new_x: float, new_y: float):
-        """Move a specific corner"""
-        if corner_index == 0:  # bottom-left
-            self.x1, self.y1 = new_x, new_y
-        elif corner_index == 1:  # bottom-right
-            self.x2, self.y1 = new_x, new_y
-        elif corner_index == 2:  # top-right
-            self.x2, self.y2 = new_x, new_y
-        elif corner_index == 3:  # top-left
-            self.x1, self.y2 = new_x, new_y
-        self.__post_init__()  # Normalize coordinates
-
-    def translate(self, dx: float, dy: float):
-        """Move the entire building"""
-        self.x1 += dx
-        self.x2 += dx
-        self.y1 += dy
-        self.y2 += dy
-
-    def to_cityjson_geometry(self) -> dict:
-        """Convert to CityJSON geometry format"""
-        # Create vertices for the building (8 points for a box)
-        vertices = [
-            [self.x1, self.y1, 0.0],
-            [self.x2, self.y1, 0.0],
-            [self.x2, self.y2, 0.0],
-            [self.x1, self.y2, 0.0],
-            [self.x1, self.y1, self.height],
-            [self.x2, self.y1, self.height],
-            [self.x2, self.y2, self.height],
-            [self.x1, self.y2, self.height],
-        ]
-
-        # Define faces (indices into vertices array)
-        boundaries = [
-            [[0, 1, 2, 3]],  # bottom
-            [[4, 7, 6, 5]],  # top
-            [[0, 4, 5, 1]],  # front
-            [[0, 4, 5, 1]],  # front
-            [[2, 6, 7, 3]],  # back
-            [[0, 3, 7, 4]],  # left
-            [[1, 5, 6, 2]],  # right
-        ]
-
-        return vertices, boundaries
 
 
 class MapCanvas(wx.Panel):
@@ -752,21 +585,6 @@ class MapCanvas(wx.Panel):
         self.pan_x += mx - new_mx
         self.pan_y += my - new_my
 
-        # if self.map_provider != MapProvider.NONE:
-        #     while self.zoom_level > 2.0 and self.geo_zoom < 18:
-        #         self.geo_zoom += 1
-        #         self.zoom_level /= 2
-        #         self.map_tiles.clear()
-        #     while self.zoom_level < 0.5 and self.geo_zoom > 10:
-        #         self.geo_zoom -= 1
-        #         self.zoom_level *= 2
-        #         self.map_tiles.clear()
-        #
-        #     wx, wy = self.screen_to_world(mx, my)
-        #     self.zoom_level = new_zoom
-        #     new_mx, new_my = self.world_to_screen(wx, wy)
-        #
-
         self.Refresh()
 
     def on_size(self, event):
@@ -814,190 +632,6 @@ class MapCanvas(wx.Panel):
         self.pan_y = height / 2 - center_y * self.zoom_level
 
         self.Refresh()
-
-
-class BasemapDialog(wx.Dialog):
-    """Dialog for selecting and configuring basemap"""
-
-    def __init__(self, parent, current_provider, lat, lon):
-        super().__init__(parent, title="Select Basemap", size=(450, 500))
-
-        self.provider = current_provider
-        self.lat = lat
-        self.lon = lon
-
-        panel = wx.Panel(self)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-
-        # Map provider selection
-        lblList = [ p.value for p in MapProvider ]
-        self.provider_box = wx.RadioBox(panel, label="Map Provider",
-                                   choices=lblList,
-                                   majorDimension=1,
-                                   style=wx.RA_SPECIFY_COLS)
-        self.provider_box.SetStringSelection(current_provider.value)
-        sizer.Add(self.provider_box, 0, wx.EXPAND | wx.ALL, 10)
-        self.provider_box.Bind(wx.EVT_RADIOBOX,self.on_provider_changed)
-
-        # Location settings
-        location_box = wx.StaticBox(panel, label="Map Center Location")
-        location_sizer = wx.StaticBoxSizer(location_box, wx.VERTICAL)
-
-        # Latitude
-        lat_box = wx.BoxSizer(wx.HORIZONTAL)
-        lat_label = wx.StaticText(panel, label="Latitude:", size=(80, -1))
-        lat_box.Add(lat_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
-        self.lat_ctrl = wx.TextCtrl(panel, value=f"{self.lat:.6f}")
-        lat_box.Add(self.lat_ctrl, 1, wx.EXPAND)
-        location_sizer.Add(lat_box, 0, wx.EXPAND | wx.ALL, 5)
-
-        # Longitude
-        lon_box = wx.BoxSizer(wx.HORIZONTAL)
-        lon_label = wx.StaticText(panel, label="Longitude:", size=(80, -1))
-        lon_box.Add(lon_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
-        self.lon_ctrl = wx.TextCtrl(panel, value=f"{self.lon:.6f}")
-        lon_box.Add(self.lon_ctrl, 1, wx.EXPAND)
-        location_sizer.Add(lon_box, 0, wx.EXPAND | wx.ALL, 5)
-
-        # Quick location buttons - arranged in 2x2 grid
-        quick_label = wx.StaticText(panel, label="Quick Locations:")
-        location_sizer.Add(quick_label, 0, wx.LEFT | wx.TOP, 5)
-
-        quick_grid = wx.GridSizer(2, 2, 5, 5)
-
-        locations = [
-            ("Berlin", 52.5200, 13.4050),
-            ("Hannover", 52.3747, 9.7385),
-            ("Trier", 49.7523, 6.6370),
-            ("Mannheim", 49.4875, 8.4660),
-        ]
-
-        for name, lat, lon in locations:
-            btn = wx.Button(panel, label=name, size=(90, 28))
-            btn.Bind(wx.EVT_BUTTON,
-                     lambda e, la=lat, lo=lon: self.set_location(la, lo))
-            quick_grid.Add(btn, 0, wx.EXPAND)
-
-        location_sizer.Add(quick_grid, 0, wx.ALL | wx.EXPAND, 5)
-        sizer.Add(location_sizer, 0,
-                  wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
-
-        # Add some spacing
-        sizer.Add((-1, 10))
-
-        # Buttons
-        btn_sizer = wx.StdDialogButtonSizer()
-        ok_btn = wx.Button(panel, wx.ID_OK)
-        cancel_btn = wx.Button(panel, wx.ID_CANCEL)
-        btn_sizer.AddButton(ok_btn)
-        btn_sizer.AddButton(cancel_btn)
-        btn_sizer.Realize()
-        sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
-
-        panel.SetSizer(sizer)
-
-        # Center the dialog
-        self.Centre()
-
-    def on_provider_changed(self, event):
-        """Handle provider selection change"""
-        rb = event.GetEventObject()
-        label = rb.GetStringSelection()
-        for p in MapProvider:
-            if p.value == label:
-                provider = p
-                break
-        else:
-            return
-        self.provider = provider
-
-    def set_location(self, lat, lon):
-        """Set location in text controls"""
-        self.lat_ctrl.SetValue(f"{lat:.6f}")
-        self.lon_ctrl.SetValue(f"{lon:.6f}")
-
-    def get_values(self):
-        """Get the current values"""
-        try:
-            lat = float(self.lat_ctrl.GetValue())
-            lon = float(self.lon_ctrl.GetValue())
-        except ValueError:
-            lat = self.lat
-            lon = self.lon
-
-        return self.provider, lat, lon
-
-class HeightDialog(wx.Dialog):
-    """Dialog for setting building height"""
-
-    def __init__(self, parent, stories=3, height=10.0, storey_height=3.3):
-        super().__init__(parent, title="Set Building Height",
-                         size=(300, 200))
-
-        self.storey_height = storey_height
-
-        panel = wx.Panel(self)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-
-        # Stories control
-        stories_box = wx.BoxSizer(wx.HORIZONTAL)
-        stories_box.Add(wx.StaticText(panel, label="Stories:"), 0,
-                        wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
-        self.stories_ctrl = wx.SpinCtrl(panel, value=str(stories), min=1,
-                                        max=100)
-        stories_box.Add(self.stories_ctrl, 1, wx.EXPAND)
-        sizer.Add(stories_box, 0, wx.EXPAND | wx.ALL, 10)
-
-        # Height control
-        height_box = wx.BoxSizer(wx.HORIZONTAL)
-        height_box.Add(wx.StaticText(panel, label="Height (m):"), 0,
-                       wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
-        self.height_ctrl = wx.TextCtrl(panel, value=f"{height:.1f}")
-        height_box.Add(self.height_ctrl, 1, wx.EXPAND)
-        sizer.Add(height_box, 0, wx.EXPAND | wx.ALL, 10)
-
-        # Buttons
-        btn_sizer = wx.StdDialogButtonSizer()
-        ok_btn = wx.Button(panel, wx.ID_OK)
-        cancel_btn = wx.Button(panel, wx.ID_CANCEL)
-        btn_sizer.AddButton(ok_btn)
-        btn_sizer.AddButton(cancel_btn)
-        btn_sizer.Realize()
-        sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
-
-        panel.SetSizer(sizer)
-
-        # Bind events
-        self.stories_ctrl.Bind(wx.EVT_SPINCTRL, self.on_stories_changed)
-        self.height_ctrl.Bind(wx.EVT_TEXT, self.on_height_changed)
-
-    def on_stories_changed(self, event):
-        """Update height when stories change"""
-        stories = self.stories_ctrl.GetValue()
-        height = stories * self.storey_height
-        self.height_ctrl.SetValue(f"{height:.1f}")
-        self.height_ctrl.SetBackgroundColour(
-            wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW))
-
-    def on_height_changed(self, event):
-        """Update stories when height changes and validate"""
-        try:
-            height = float(self.height_ctrl.GetValue())
-            if height < 0:
-                self.height_ctrl.SetBackgroundColour(
-                    wx.Colour(255, 200, 200))
-            else:
-                self.height_ctrl.SetBackgroundColour(
-                    wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW))
-                stories = max(1, round(height / self.storey_height))
-                self.stories_ctrl.SetValue(stories)
-        except ValueError:
-            self.height_ctrl.SetBackgroundColour(wx.Colour(255, 200, 200))
-
-    def get_values(self):
-        """Get the current values"""
-        return self.stories_ctrl.GetValue(), float(
-            self.height_ctrl.GetValue())
 
 
 class MainFrame(wx.Frame):
@@ -1562,8 +1196,9 @@ class CityJSONApp(wx.App):
         self.frame = MainFrame()
         return True
 
-
-if __name__ == '__main__':
+def main():
     app = CityJSONApp()
     app.MainLoop()
 
+if __name__ == '__main__':
+    main()

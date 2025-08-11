@@ -1,0 +1,43 @@
+[project]
+name = "citysketch"
+dynamic = ["version"]
+readme = "README.md"
+license = {text = "EUPL-1.2"}
+authors = [
+    {name = "Clemens Drüe", email = "druee@uni-trier.de"}
+]
+description = "A modern eddy-covariance software inspired by EC-PACK."
+keywords = ["eddy-covariance", "data-analysis", "atmospheric"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Environment :: X11 Applications :: GTK",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: GIS"
+]
+requires-python = ">=3.7"
+depenencies = [
+    "wx",
+    "numpy"
+]
+
+[project.gui-scripts]
+citysketch = "citysketch.mainApp.main"
+
+[build-system]
+# Minimum requirements for the build system to execute.
+requires = [
+    "setuptools",
+    "wx",
+    "numpy"
+]
