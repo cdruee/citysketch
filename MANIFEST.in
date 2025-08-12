@@ -4,9 +4,9 @@ exclude tox.ini
 global-exclude *.pyc __pycache__/
 
 # Exclude entire directories
-prune .idea/
+prune *.idea/
 prune *.egg-info/
-prune logo/6
+prune logo/
 
 # Include non-SCM files
-include data/important.json
+#include data/important.json
