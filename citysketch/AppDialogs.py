@@ -1,7 +1,66 @@
 import wx
+from numpy import __version__ as numpy_version
 
+from _version import __version__
 from utils import MapProvider
 
+class AboutDialog(wx.Dialog):
+    def __init__(self, parent):
+        wx.Dialog.__init__(self, parent, title="About"))
+        self._create()
+        self.CenterOnParent()
+
+    def _create(self):
+
+        sTitle = f'CitySketch ({__version__})'
+
+        szrMain = wx.BoxSizer(wx.VERTICAL)
+        szrTop = wx.BoxSizer(wx.HORIZONTAL)
+
+        # left
+        bmpCtrl = wx.StaticBitmap(self, wx.ID_ANY, wx.Bitmap('bitmaps/wxWidgets.png', wx.BITMAP_TYPE_PNG))
+        szrTop.Add(bmpCtrl, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
+
+        #right
+        szrRight = wx.BoxSizer(wx.VERTICAL)
+
+        label = wx.StaticText(self, wx.ID_STATIC, sTitle)
+        fntTitle = label.GetFont()
+        fntTitle.MakeLarger()
+        fntTitle.MakeBold()
+        label.SetFont(fntTitle)
+        szrRight.Add(label, 0, wx.ALL|wx.ALIGN_CENTER, 5)
+
+        label = wx.StaticText(self, wx.ID_STATIC,
+                              'Copyright (c) 2025 Clemens Drüe')
+        szrRight.Add(label, 0, wx.LEFT|wx.RIGHT|wx.BOTTOM|wx.ALIGN_CENTER, 5)
+
+        label = wx.StaticText(self, wx.ID_STATIC,
+                              'Library Versions:\n'
+                              '- wxPython: {wx.__version__}\n'
+                              '- Python: {sys.version.split()[0]}\n'
+                              '- NumPy: {np.__version__}')
+        szrRight.Add(label, 0, wx.LEFT|wx.RIGHT|wx.TOP|wx.ALIGN_CENTER, 5)
+
+
+        label = wx.StaticText(self, wx.ID_STATIC,
+                              'Map Data Sources:\n'
+                              '- OpenStreetMap: © OpenStreetMap contributors\n'
+                              '- Satellite: © Esri World Imagery\n'
+                              '- Terrain: © OpenTopoMap (CC-BY-SA)')
+        szrRight.Add(label, 0, wx.LEFT|wx.RIGHT|wx.TOP|wx.ALIGN_CENTER, 5)
+
+
+        szrTop.Add(szrRight, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
+
+        szrMain.Add(szrTop, 0, wx.ALL, 5)
+
+        btnSzr = self.CreateSeparatedButtonSizer(wx.CLOSE)
+        szrMain.Add(btnSzr, 0, wx.ALL|wx.EXPAND, 5)
+
+        self.SetSizer(szrMain)
+
+        szrMain.SetSizeHints(self)
 
 class BasemapDialog(wx.Dialog):
     """Dialog for selecting and configuring basemap"""

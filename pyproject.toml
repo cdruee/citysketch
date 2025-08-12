@@ -37,8 +37,21 @@ citysketch = "citysketch.mainApp:main"
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+packages = ["citysketch"]
+include-package-data = false
+
+[tool.setuptools.package-data]
+citysketch = ['../citysketch_logo.png']
+
+[tool.setuptools.exclude-package-data]
+mypkg = ["../.idea*"]
+
 #[tool.setuptools.dynamic]
 #version = {attr = "citysketch.__version__"}
 
 [tool.setuptools_scm]
 version_file = "citysketch/_version.py"
+
+[project.entry-points."setuptools.file_finders"]
+setuptools_scm = "setuptools_scm._file_finders:find_files"

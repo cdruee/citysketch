@@ -1,0 +1,12 @@
+# Exclude development files
+exclude .gitlab-ci.yaml
+exclude tox.ini
+global-exclude *.pyc __pycache__/
+
+# Exclude entire directories
+prune .idea/
+prune *.egg-info/
+prune logo/6
+
+# Include non-SCM files
+include data/important.json
