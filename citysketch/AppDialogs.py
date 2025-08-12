@@ -1,6 +1,6 @@
 import wx
 
-from custom_types import MapProvider
+from utils import MapProvider
 
 
 class BasemapDialog(wx.Dialog):

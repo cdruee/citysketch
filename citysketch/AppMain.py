@@ -20,8 +20,8 @@ import numpy as np
 import wx
 
 from AppDialogs import BasemapDialog, HeightDialog
-from custom_types import SelectionMode, MapProvider, Building
-from utils import get_location_with_fallback
+from Building import Building
+from utils import SelectionMode, MapProvider, get_location_with_fallback
 from _version import __version__ as APP_VERSION
 
 
@@ -131,7 +131,7 @@ class MapCanvas(wx.Panel):
         self.drag_building = None
         self.drag_corner = None
         self.drag_corner_index = None
-        self.first_corner = None
+        self.floating_rect = None
         self.selection_rect_start = None
         self.current_mouse_pos = None
 
@@ -175,7 +175,7 @@ class MapCanvas(wx.Panel):
                 continue
 
             # Snap to corners
-            for cx, cy in building.get_corners():
+            for cx, cy in building.expand_corners():
                 dist = math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
                 if dist < best_dist:
                     best_x, best_y = cx, cy
@@ -298,15 +298,16 @@ class MapCanvas(wx.Panel):
             self.statusbar.SetStatusText(
                 f"Zoom level {self.geo_zoom:2d}  "
                 f"factor {self.zoom_level:3.2f} "
-                f"Pan: {self.pan_x:7.1f} {self.pan_y:7.1f}",  i=1)
+                f"Pan: {self.pan_x:7.1f} {self.pan_y:7.1f}",  i=2)
 
         # Draw buildings
         for building in self.buildings:
             self.draw_building(gc, building)
 
         # Draw preview for new building
-        if self.mode == SelectionMode.ADD_BUILDING and self.first_corner and self.current_mouse_pos:
+        if self.mode == SelectionMode.ADD_BUILDING and self.floating_rect and self.current_mouse_pos:
             self.draw_building_preview(gc)
+            print (self.floating_rect)
 
         # Draw selection rectangle
         if self.mode == SelectionMode.RECTANGLE_SELECT and self.selection_rect_start and self.current_mouse_pos:
@@ -390,10 +391,18 @@ class MapCanvas(wx.Panel):
             y += grid_size
 
     def draw_building(self, gc, building: Building):
-        """Draw a single building"""
-        x1, y1 = self.world_to_screen(building.x1, building.y1)
-        x2, y2 = self.world_to_screen(building.x2, building.y2)
+        """Draw a single building with rotation support"""
+        # Get rotated corners
+        corners = building.get_corners()
 
+        # Create path for rotated rectangle
+        path = gc.CreatePath()
+        path.MoveToPoint(*self.world_to_screen(*corners[0]))
+        for corner in corners[1:]:
+            path.AddLineToPoint(*self.world_to_screen(*corner))
+        path.CloseSubpath()
+
+        # Set colors based on selection
         if building.selected:
             fill_color = wx.Colour(150, 180, 255, 180)
             border_color = wx.Colour(0, 0, 255)
@@ -403,69 +412,131 @@ class MapCanvas(wx.Panel):
 
         gc.SetBrush(wx.Brush(fill_color))
         gc.SetPen(wx.Pen(border_color, 2))
-        gc.DrawRectangle(x1, y1, x2 - x1, y2 - y1)
+        gc.DrawPath(path)
+
+        # Draw height text at center
+        cx = sum(c[0] for c in corners) / 4
+        cy = sum(c[1] for c in corners) / 4
+        scx, scy = self.world_to_screen(cx, cy)
 
         gc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL),
                    wx.Colour(255, 255, 255))
-        text = f"{building.stories}F"
+        text = f"{building.storeys}F"
         tw, th = gc.GetTextExtent(text)
-        gc.DrawText(text, (x1 + x2) / 2 - tw / 2, (y1 + y2) / 2 - th / 2)
+        gc.DrawText(text, scx - tw / 2, scy - th / 2)
 
+        # Draw corner handles if selected
         if building.selected:
-            gc.SetBrush(wx.Brush(wx.Colour(255, 255, 255)))
-            gc.SetPen(wx.Pen(wx.Colour(0, 0, 255), 2))
-            for cx, cy in building.get_corners():
+            # Check if Ctrl is pressed (use rotation mode)
+            ctrl_pressed = wx.GetKeyState(wx.WXK_CONTROL)
+
+            for i, (cx, cy) in enumerate(corners):
                 sx, sy = self.world_to_screen(cx, cy)
-                gc.DrawEllipse(sx - 4, sy - 4, 8, 8)
+
+                if ctrl_pressed:
+                    # Draw circles in rotation mode
+                    if i == 0:
+                        # Filled circle for rotation center
+                        gc.SetBrush(wx.Brush(wx.Colour(0, 0, 255)))
+                    else:
+                        # Open circle for other corners
+                        gc.SetBrush(wx.Brush(wx.Colour(255, 255, 255)))
+                    gc.SetPen(wx.Pen(wx.Colour(0, 0, 255), 2))
+                    gc.DrawEllipse(sx - 5, sy - 5, 10, 10)
+                else:
+                    # Draw squares in normal mode
+                    gc.SetBrush(wx.Brush(wx.Colour(255, 255, 255)))
+                    gc.SetPen(wx.Pen(wx.Colour(0, 0, 255), 2))
+                    gc.DrawRectangle(sx - 4, sy - 4, 8, 8)
 
     def draw_building_preview(self, gc):
-        """Draw preview of building being created"""
-        x1, y1 = self.first_corner
+        """Draw preview of building being created with rotation support"""
+        x1, y1 = self.floating_rect['anchor']
         x2, y2 = self.screen_to_world(*self.current_mouse_pos)
-        x2, y2 = self.snap_point(x2, y2)
 
-        sx1, sy1 = self.world_to_screen(x1, y1)
-        sx2, sy2 = self.world_to_screen(x2, y2)
+        ctrl_pressed = wx.GetKeyState(wx.WXK_CONTROL)
+
+        if ctrl_pressed and self.floating_rect:
+            # Calculate distance for fixed size
+            dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+            # Calculate angle
+            angle = math.atan2(y2 - y1, x2 - x1)
+
+            # Create a rectangle with constant aspect ratio
+            old_dist = math.sqrt(self.floating_rect['b']**2. +
+                                 self.floating_rect['a']**2.)
+            new_a = self.floating_rect['a']
+            new_b = self.floating_rect['b']
+            # new_a = self.floating_rect['a'] * dist/old_dist
+            # new_b = self.floating_rect['b'] * dist/old_dist
+            new_r = angle - math.atan2(new_b, new_a)
+        
+        else:
+            # Scaling mode during creation
+            dx = x2 - x1
+            dy = y2 - y1
+            new_r = self.floating_rect['r']
+            new_a = + math.cos(new_r) * dx + math.sin(new_r) * dy
+            new_b = - math.sin(new_r) * dx + math.cos(new_r) * dy
+            
+        corners = [
+            (0., 0.),
+            (new_a, 0.),
+            (new_a, new_b),
+            (0., new_b)
+        ]
+
+        # Draw rotated preview
+        path = gc.CreatePath()
+        sx, sy = self.world_to_screen(x1, y1)
+        path.MoveToPoint(sx, sy)
+        for ca, cb in corners[1:]:
+            x = x1 + math.cos(new_r) * ca - math.sin(new_r) * cb
+            y = y1 + math.sin(new_r) * ca + math.cos(new_r) * cb
+            sx, sy = self.world_to_screen(x, y)
+            path.AddLineToPoint(sx, sy)
+        path.CloseSubpath()
 
         gc.SetBrush(wx.Brush(wx.Colour(100, 255, 100, 100)))
         gc.SetPen(wx.Pen(wx.Colour(0, 200, 0), 2, wx.PENSTYLE_DOT))
-        gc.DrawRectangle(min(sx1, sx2), min(sy1, sy2), abs(sx2 - sx1),
-                         abs(sy2 - sy1))
+        gc.DrawPath(path)
 
-    def draw_selection_rectangle(self, gc):
-        """Draw selection rectangle"""
-        x1, y1 = self.selection_rect_start
-        x2, y2 = self.current_mouse_pos
-
-        gc.SetBrush(wx.Brush(wx.Colour(0, 0, 255, 30)))
-        gc.SetPen(wx.Pen(wx.Colour(0, 0, 255), 1, wx.PENSTYLE_DOT))
-        gc.DrawRectangle(min(x1, x2), min(y1, y2), abs(x2 - x1),
-                         abs(y2 - y1))
+        self.floating_rect['a'] = new_a
+        self.floating_rect['b'] = new_b
+        self.floating_rect['r'] = new_r
 
     def on_mouse_down(self, event):
-        """Handle mouse down events"""
+        """Handle mouse down events with rotation support"""
         self.mouse_down = True
         self.drag_start = event.GetPosition()
         wx, wy = self.screen_to_world(event.GetX(), event.GetY())
+        ctrl_pressed = event.ControlDown()
 
         if self.mode == SelectionMode.ADD_BUILDING:
-            if self.first_corner is None:
-                self.first_corner = self.snap_point(wx, wy)
+            if self.floating_rect is None:
+                self.floating_rect = {'anchor': self.snap_point(wx, wy),
+                                      'a': 0., 'b': 0., 'r': 0.}
+                self.statusbar.SetStatusText(
+                    "Move to draw, press Ctrl to rotate, click to finish")
             else:
-                x2, y2 = self.snap_point(wx, wy)
+                x1, y1 = self.floating_rect['anchor']
                 building = Building(
                     id=str(uuid.uuid4()),
-                    x1=self.first_corner[0],
-                    y1=self.first_corner[1],
-                    x2=x2,
-                    y2=y2,
+                    x1=x1,
+                    y1=y1,
+                    a=self.floating_rect['a'],
+                    b=self.floating_rect['b'],
                     height=self.storey_height * 3,
-                    stories=3
+                    storeys=3,
+                    rotation=self.floating_rect['r']
                 )
+
                 self.buildings.append(building)
-                self.first_corner = None
+                self.floating_rect = None
                 self.mode = SelectionMode.NORMAL
+                self.statusbar.SetStatusText(
+                    f"Added building #{len(self.buildings)}")
                 self.Refresh()
 
         elif self.mode == SelectionMode.NORMAL:
@@ -473,15 +544,26 @@ class MapCanvas(wx.Panel):
                 self.mode = SelectionMode.RECTANGLE_SELECT
                 self.selection_rect_start = event.GetPosition()
             else:
+                # Check for corner drag
                 for building in self.buildings:
                     if building.selected:
                         corner_idx = building.get_corner_index(wx, wy,
                                                                10 / self.zoom_level)
                         if corner_idx is not None:
-                            self.drag_corner = building
-                            self.drag_corner_index = corner_idx
-                            return
+                            if ctrl_pressed:
+                                # Rotation mode
+                                self.drag_corner = building
+                                self.drag_corner_index = corner_idx
+                                self.drag_mode = 'rotate'
+                                return
+                            else:
+                                # Normal scaling mode
+                                self.drag_corner = building
+                                self.drag_corner_index = corner_idx
+                                self.drag_mode = 'scale'
+                                return
 
+                # Check for building click
                 clicked_building = None
                 for building in reversed(self.buildings):
                     if building.contains_point(wx, wy):
@@ -524,21 +606,27 @@ class MapCanvas(wx.Panel):
         self.drag_building = None
         self.drag_corner = None
         self.drag_corner_index = None
+        self.drag_mode = None
         self.drag_start = None
 
     def on_mouse_motion(self, event):
-        """Handle mouse motion events"""
+        """Handle mouse motion events with rotation support"""
         self.current_mouse_pos = event.GetPosition()
         wx, wy = self.screen_to_world(event.GetX(), event.GetY())
 
         if self.mouse_down and self.drag_start:
             if self.drag_corner and self.drag_corner_index is not None:
                 snapped_x, snapped_y = self.snap_point(wx, wy,
-                                                       self.drag_corner)
-                self.drag_corner.move_corner(self.drag_corner_index,
-                                             snapped_x, snapped_y)
+                                                           self.drag_corner)
+                if self.drag_mode == 'scale':
+                    self.drag_corner.scale_to_corner(
+                        self.drag_corner_index, snapped_x, snapped_y)
+                elif self.drag_mode == 'rotate':
+                    self.drag_corner.rotate_to_corner(
+                        self.drag_corner_index, snapped_x, snapped_y)
                 self.Refresh()
             elif self.drag_building:
+                # Moving building
                 start_wx, start_wy = self.screen_to_world(*self.drag_start)
                 dx = wx - start_wx
                 dy = wy - start_wy
@@ -551,11 +639,12 @@ class MapCanvas(wx.Panel):
                 actual_dx = snapped_x - self.drag_building.x1
                 actual_dy = snapped_y - self.drag_building.y1
 
-                self.drag_building.translate(actual_dx, actual_dy)
+                self.drag_building.shift(actual_dx, actual_dy)
                 self.drag_start = event.GetPosition()
                 self.Refresh()
             elif event.MiddleIsDown() or (
                     event.RightIsDown() and not self.mode == SelectionMode.ADD_BUILDING):
+                # Panning
                 dx = event.GetX() - self.drag_start[0]
                 dy = event.GetY() - self.drag_start[1]
                 self.pan_x += dx
@@ -563,10 +652,15 @@ class MapCanvas(wx.Panel):
                 self.drag_start = event.GetPosition()
                 self.Refresh()
 
-        if self.mode == SelectionMode.ADD_BUILDING and self.first_corner:
+        # Update preview
+        if self.mode == SelectionMode.ADD_BUILDING and self.floating_rect:
             self.Refresh()
 
         if self.mode == SelectionMode.RECTANGLE_SELECT:
+            self.Refresh()
+
+        # Update corner appearance when Ctrl is pressed/released
+        if any(b.selected for b in self.buildings):
             self.Refresh()
 
     def on_mouse_wheel(self, event):
@@ -596,7 +690,7 @@ class MapCanvas(wx.Panel):
         """Set stories for selected buildings"""
         for building in self.buildings:
             if building.selected:
-                building.stories = stories
+                building.storeys = stories
                 building.height = stories * self.storey_height
         self.Refresh()
 
@@ -765,7 +859,7 @@ class MainFrame(wx.Frame):
         # Status bar
         statusbar = self.CreateStatusBar()
         statusbar.SetFieldsCount(3)
-        statusbar.SetStatusWidths([-2,-4,-1])
+        statusbar.SetStatusWidths([-3,-2,-2])
         self.SetStatusText("Ready")
         self.canvas.statusbar = statusbar
 
@@ -789,8 +883,7 @@ class MainFrame(wx.Frame):
     def on_add_building(self, event):
         """Switch to add building mode"""
         self.canvas.mode = SelectionMode.ADD_BUILDING
-        self.canvas.first_corner = None
-        self.add_building_btn.SetLabel("Adding...")
+        self.canvas.floating_rect = None
         self.SetStatusText("Click to place first corner of building")
 
     def on_toggle_snap(self, event):
@@ -809,7 +902,7 @@ class MainFrame(wx.Frame):
             return
 
         # Get current values from first selected building
-        stories = selected[0].stories
+        stories = selected[0].storeys
         height = selected[0].height
 
         dialog = HeightDialog(self, stories, height,
@@ -817,7 +910,7 @@ class MainFrame(wx.Frame):
         if dialog.ShowModal() == wx.ID_OK:
             new_stories, new_height = dialog.get_values()
             for building in selected:
-                building.stories = new_stories
+                building.storeys = new_stories
                 building.height = new_height
             self.canvas.Refresh()
             self.SetStatusText(
@@ -904,7 +997,7 @@ class MainFrame(wx.Frame):
                     self.canvas.storey_height = height
                     # Update all buildings
                     for building in self.canvas.buildings:
-                        building.height = building.stories * height
+                        building.height = building.storeys * height
                     self.canvas.Refresh()
                     self.SetStatusText(
                         f"Storey height set to {height:.1f}m")
@@ -1048,7 +1141,7 @@ class MainFrame(wx.Frame):
                                     x2=max(xs),
                                     y2=max(ys),
                                     height=height,
-                                    stories=stories
+                                    storeys=stories
                                 )
                                 self.canvas.buildings.append(building)
 
@@ -1096,7 +1189,7 @@ class MainFrame(wx.Frame):
                     "type": "Building",
                     "attributes": {
                         "height": building.height,
-                        "stories": building.stories
+                        "stories": building.storeys
                     },
                     "geometry": [{
                         "type": "Solid",

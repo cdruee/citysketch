@@ -1,5 +1,6 @@
 import json
 import urllib.request
+from enum import Enum
 
 
 def get_location_from_ip():
@@ -67,3 +68,16 @@ def get_location_with_fallback():
         # Fallback to default location (Camous II, Uni Trier, Germany)
         print("Could not detect location, using default")
         return (49.74795,6.67412)
+
+
+class SelectionMode(Enum):
+    NORMAL = "normal"
+    ADD_BUILDING = "add_building"
+    RECTANGLE_SELECT = "rectangle_select"
+
+
+class MapProvider(Enum):
+    NONE = "None"
+    OSM = "OpenStreetMap"
+    SATELLITE = "Satellite"
+    TERRAIN = "Terrain"
