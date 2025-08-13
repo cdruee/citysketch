@@ -19,11 +19,12 @@ from typing import List, Tuple, Optional
 import numpy as np
 import wx
 
-from AppDialogs import BasemapDialog, HeightDialog
+from AppDialogs import AboutDialog, BasemapDialog, HeightDialog
 from Building import Building
 from utils import SelectionMode, MapProvider, get_location_with_fallback
 from _version import __version__ as APP_VERSION
 
+# =========================================================================
 
 class TileCache:
     """Simple tile cache for map tiles"""
@@ -92,6 +93,7 @@ class TileCache:
         except:
             return None
 
+# =========================================================================
 
 class MapCanvas(wx.Panel):
     """The main canvas for displaying and editing buildings"""
@@ -175,25 +177,26 @@ class MapCanvas(wx.Panel):
                 continue
 
             # Snap to corners
-            for cx, cy in building.expand_corners():
+            for cx, cy in building.get_corners():
                 dist = math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
                 if dist < best_dist:
                     best_x, best_y = cx, cy
                     best_dist = dist
 
             # Snap to edges
-            if abs(x - building.x1) < best_dist:
-                best_x = building.x1
-                best_dist = abs(x - building.x1)
-            if abs(x - building.x2) < best_dist:
-                best_x = building.x2
-                best_dist = abs(x - building.x2)
-            if abs(y - building.y1) < best_dist:
-                best_y = building.y1
-                best_dist = abs(y - building.y1)
-            if abs(y - building.y2) < best_dist:
-                best_y = building.y2
-                best_dist = abs(y - building.y2)
+            # FIXME
+            # if abs(x - building.x1) < best_dist:
+            #     best_x = building.x1
+            #     best_dist = abs(x - building.x1)
+            # if abs(x - building.x2) < best_dist:
+            #     best_x = building.x2
+            #     best_dist = abs(x - building.x2)
+            # if abs(y - building.y1) < best_dist:
+            #     best_y = building.y1
+            #     best_dist = abs(y - building.y1)
+            # if abs(y - building.y2) < best_dist:
+            #     best_y = building.y2
+            #     best_dist = abs(y - building.y2)
 
         return best_x, best_y
 
@@ -727,6 +730,7 @@ class MapCanvas(wx.Panel):
 
         self.Refresh()
 
+# =========================================================================
 
 class MainFrame(wx.Frame):
     """Main application frame"""
@@ -1260,27 +1264,11 @@ class MainFrame(wx.Frame):
         self.Close()
 
     def on_about(self, event):
-        """Show about dialog"""
-        info = f"""CityJSON Creator
-Version: {APP_VERSION}
+        about = (AboutDialog(self))
+        about.ShowModal()
+        about.Destroy()
 
-A graphical tool for creating and editing CityJSON files.
-
-Library Versions:
-- wxPython: {wx.__version__}
-- Python: {sys.version.split()[0]}
-- NumPy: {np.__version__}
-
-Map Data Sources:
-- OpenStreetMap: © OpenStreetMap contributors
-- Satellite: © Esri World Imagery
-- Terrain: © OpenTopoMap (CC-BY-SA)
-
-© 2024 - Created with Claude"""
-
-        wx.MessageBox(info, "About CityJSON Creator",
-                      wx.OK | wx.ICON_INFORMATION)
-
+# =========================================================================
 
 class CityJSONApp(wx.App):
     """Main application class"""
@@ -1288,6 +1276,8 @@ class CityJSONApp(wx.App):
     def OnInit(self):
         self.frame = MainFrame()
         return True
+
+# =========================================================================
 
 def main():
     app = CityJSONApp()

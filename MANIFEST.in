@@ -1,4 +1,5 @@
 # Exclude development files
+exclude .gitignore
 exclude .gitlab-ci.yaml
 exclude tox.ini
 global-exclude *.pyc __pycache__/
