@@ -56,6 +56,18 @@ class Building:
 
         return rotated
 
+    def get_llur(self) -> Tuple[float, float,float, float]:
+        """Get lower left and upper right of surrounding rectangle"""
+        corners = self.get_corners()
+
+        le = min(c[0] for c in corners)
+        ri = max(c[0] for c in corners)
+        lo = min(c[1] for c in corners)
+        up = max(c[1] for c in corners)
+
+        return le, lo, ri, up
+
+
     def word_to_building(self, x: float, y: float
                          ) -> tuple[float, float]:
         dx = x - self.x1

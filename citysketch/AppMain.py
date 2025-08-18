@@ -509,6 +509,28 @@ class MapCanvas(wx.Panel):
         self.floating_rect['b'] = new_b
         self.floating_rect['r'] = new_r
 
+    def draw_selection_rectangle(self, gc):
+        """Draw preview of building being created with rotation support"""
+
+        # Draw rectangle
+        sx, sy = self.selection_rect_start
+        cx, cy = self.current_mouse_pos
+        corners = [
+            (sx, sy),
+            (cx, sy),
+            (cx, cy),
+            (sx, cy)
+        ]
+        path = gc.CreatePath()
+        path.MoveToPoint(sx, sy)
+        for xx, yy in corners[1:]:
+            path.AddLineToPoint(xx, yy)
+        path.CloseSubpath()
+
+        gc.SetBrush(wx.NullBrush)
+        gc.SetPen(wx.Pen(wx.Colour(32, 32, 32), 2, wx.PENSTYLE_SHORT_DASH))
+        gc.DrawPath(path)
+
     def on_mouse_down(self, event):
         """Handle mouse down events with rotation support"""
         self.mouse_down = True
@@ -598,8 +620,9 @@ class MapCanvas(wx.Panel):
             ry1, ry2 = min(y1, y2), max(y1, y2)
 
             for building in self.buildings:
-                if (building.x1 >= rx1 and building.x2 <= rx2 and
-                        building.y1 >= ry1 and building.y2 <= ry2):
+                le, lo, ri, up = building.get_llur()
+                if (le >= rx1 and ri <= rx2 and
+                        lo >= ry1 and up <= ry2):
                     building.selected = True
 
             self.mode = SelectionMode.NORMAL
@@ -645,8 +668,7 @@ class MapCanvas(wx.Panel):
                 self.drag_building.shift(actual_dx, actual_dy)
                 self.drag_start = event.GetPosition()
                 self.Refresh()
-            elif event.MiddleIsDown() or (
-                    event.RightIsDown() and not self.mode == SelectionMode.ADD_BUILDING):
+            elif not event.ShiftDown():
                 # Panning
                 dx = event.GetX() - self.drag_start[0]
                 dy = event.GetY() - self.drag_start[1]
@@ -707,10 +729,10 @@ class MapCanvas(wx.Panel):
         if not self.buildings:
             return
 
-        min_x = min(b.x1 for b in self.buildings)
-        max_x = max(b.x2 for b in self.buildings)
-        min_y = min(b.y1 for b in self.buildings)
-        max_y = max(b.y2 for b in self.buildings)
+        min_x = min(b.get_llur()[0] for b in self.buildings)
+        max_x = min(b.get_llur()[2] for b in self.buildings)
+        min_y = min(b.get_llur()[1] for b in self.buildings)
+        max_y = min(b.get_llur()[3] for b in self.buildings)
 
         width, height = self.GetSize()
         margin = 50
