@@ -1,10 +1,12 @@
+import re
+import sys
+
 import wx
 from numpy import __version__ as numpy_version
-import sys
-import re
 
 from ._version import __version__
 from .utils import MapProvider
+
 
 # =========================================================================
 
@@ -15,16 +17,15 @@ class AboutDialog(wx.Dialog):
         self.CenterOnParent()
 
     def _create(self):
-
         szrMain = wx.BoxSizer(wx.VERTICAL)
         szrTop = wx.BoxSizer(wx.HORIZONTAL)
 
         # left
         bmpCtrl = wx.StaticBitmap(self, wx.ID_ANY, wx.Bitmap(
             'citysketch_logo.png', wx.BITMAP_TYPE_PNG))
-        szrTop.Add(bmpCtrl, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
+        szrTop.Add(bmpCtrl, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
 
-        #right
+        # right
         szrRight = wx.BoxSizer(wx.VERTICAL)
 
         version = re.sub('\+.*', '', __version__)
@@ -34,38 +35,39 @@ class AboutDialog(wx.Dialog):
         fntTitle.MakeLarger()
         fntTitle.MakeBold()
         label.SetFont(fntTitle)
-        szrRight.Add(label, 0, wx.ALL|wx.ALIGN_CENTER, 5)
+        szrRight.Add(label, 0, wx.ALL | wx.ALIGN_CENTER, 5)
 
         label = wx.StaticText(self, wx.ID_STATIC,
                               'Copyright (c) 2025 Clemens Drüe')
-        szrRight.Add(label, 0, wx.BOTTOM|wx.ALIGN_CENTER, 5)
+        szrRight.Add(label, 0, wx.BOTTOM | wx.ALIGN_CENTER, 5)
 
         label = wx.StaticText(self, wx.ID_STATIC,
                               f'Library Versions:\n'
                               f'- wxPython: {wx.__version__}\n'
                               f'- Python: {sys.version.split()[0]}\n'
                               f'- NumPy: {numpy_version}')
-        szrRight.Add(label, 0, wx.LEFT|wx.TOP|wx.ALIGN_CENTER, 5)
-
+        szrRight.Add(label, 0, wx.LEFT | wx.TOP | wx.ALIGN_CENTER, 5)
 
         label = wx.StaticText(self, wx.ID_STATIC,
                               'Map Data Sources:\n'
                               '- OpenStreetMap: © OpenStreetMap contributors\n'
                               '- Satellite: © Esri World Imagery\n'
                               '- Terrain: © OpenTopoMap (CC-BY-SA)')
-        szrRight.Add(label, 0, wx.LEFT|wx.RIGHT|wx.TOP|wx.ALIGN_CENTER, 5)
+        szrRight.Add(label, 0,
+                     wx.LEFT | wx.RIGHT | wx.TOP | wx.ALIGN_CENTER, 5)
 
-
-        szrTop.Add(szrRight, 0, wx.ALL|wx.ALIGN_CENTER_VERTICAL, 5)
+        szrTop.Add(szrRight, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
 
         szrMain.Add(szrTop, 0, wx.ALL, 5)
 
         btnSzr = self.CreateSeparatedButtonSizer(wx.CLOSE)
-        szrMain.Add(btnSzr, 0, wx.ALL|wx.EXPAND, 5)
+        szrMain.Add(btnSzr, 0, wx.ALL | wx.EXPAND, 5)
 
-        self.SetSizer(szrMain)
+        #self.SetSizer(szrMain)
+        self.SetSizerAndFit(szrMain)
 
         szrMain.SetSizeHints(self)
+
 
 # =========================================================================
 
@@ -83,14 +85,14 @@ class BasemapDialog(wx.Dialog):
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         # Map provider selection
-        lblList = [ p.value for p in MapProvider ]
+        lblList = [p.value for p in MapProvider]
         self.provider_box = wx.RadioBox(panel, label="Map Provider",
-                                   choices=lblList,
-                                   majorDimension=1,
-                                   style=wx.RA_SPECIFY_COLS)
+                                        choices=lblList,
+                                        majorDimension=1,
+                                        style=wx.RA_SPECIFY_COLS)
         self.provider_box.SetStringSelection(current_provider.value)
         sizer.Add(self.provider_box, 0, wx.EXPAND | wx.ALL, 10)
-        self.provider_box.Bind(wx.EVT_RADIOBOX,self.on_provider_changed)
+        self.provider_box.Bind(wx.EVT_RADIOBOX, self.on_provider_changed)
 
         # Location settings
         location_box = wx.StaticBox(panel, label="Map Center Location")
@@ -147,7 +149,8 @@ class BasemapDialog(wx.Dialog):
         btn_sizer.Realize()
         sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
 
-        panel.SetSizer(sizer)
+        #panel.SetSizer(sizer)
+        panel.SetSizerAndFit(sizer)
 
         # Center the dialog
         self.Centre()
@@ -179,6 +182,7 @@ class BasemapDialog(wx.Dialog):
             lon = self.lon
 
         return self.provider, lat, lon
+
 
 # =========================================================================
 
@@ -220,7 +224,9 @@ class HeightDialog(wx.Dialog):
         btn_sizer.Realize()
         sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
 
-        panel.SetSizer(sizer)
+        # panel.SetSizer(sizer)
+        panel.SetSizerAndFit(sizer)
+
 
         # Bind events
         self.stories_ctrl.Bind(wx.EVT_SPINCTRL, self.on_stories_changed)
@@ -254,6 +260,7 @@ class HeightDialog(wx.Dialog):
         return self.stories_ctrl.GetValue(), float(
             self.height_ctrl.GetValue())
 
+
 # =========================================================================
 
 class GeoTiffDialog(wx.Dialog):
@@ -280,24 +287,27 @@ class GeoTiffDialog(wx.Dialog):
         # Create horizontal sizer for slider and value
         slider_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        self.opacity_slider = wx.Slider(panel, value=int(opacity * 100),
-                                        minValue=0, maxValue=100,
-                                        style=wx.SL_HORIZONTAL | wx.SL_LABELS)
-        slider_sizer.Add(self.opacity_slider, 1, wx.EXPAND | wx.RIGHT, 5)
+        self.opacity_slider = wx.Slider(
+            panel, value=int(opacity * 100),
+            minValue=0, maxValue=100,
+            style=wx.SL_HORIZONTAL | wx.SL_LABELS)
+        slider_sizer.Add(self.opacity_slider, 1,
+                         wx.EXPAND | wx.RIGHT, 5)
 
         self.opacity_text = wx.StaticText(panel, label=f"{opacity:.0%}")
-        slider_sizer.Add(self.opacity_text, 0, wx.ALIGN_CENTER_VERTICAL)
+        slider_sizer.Add(self.opacity_text, 0,
+                         wx.ALIGN_CENTER_VERTICAL)
 
         opacity_sizer.Add(slider_sizer, 0, wx.EXPAND | wx.ALL, 5)
         sizer.Add(opacity_sizer, 0,
                   wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
-        # Info text
-        info_text = wx.StaticText(panel,
-                                  label="The GeoTIFF overlay will be displayed between\n"
-                                        "the basemap and building layers.")
-        info_text.SetFont(info_text.GetFont().MakeSmaller())
-        sizer.Add(info_text, 0, wx.ALL | wx.ALIGN_CENTER, 10)
+        # # Info text
+        # info_text = wx.StaticText(panel,
+        #                           label="The GeoTIFF overlay will be displayed between\n"
+        #                                 "the basemap and building layers.")
+        # info_text.SetFont(info_text.GetFont().MakeSmaller())
+        # sizer.Add(info_text, 0, wx.ALL | wx.ALIGN_CENTER, 10)
 
         # Buttons
         btn_sizer = wx.StdDialogButtonSizer()
@@ -308,7 +318,8 @@ class GeoTiffDialog(wx.Dialog):
         btn_sizer.Realize()
         sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
 
-        panel.SetSizer(sizer)
+        #panel.SetSizer(sizer)
+        panel.SetSizerAndFit(sizer)
 
         # Bind events
         self.opacity_slider.Bind(wx.EVT_SLIDER, self.on_opacity_changed)

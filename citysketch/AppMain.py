@@ -20,14 +20,14 @@ import numpy as np
 import wx
 
 try:
-    from osgeo import gdal, osr
+    import blubb
     import rasterio
     from rasterio.warp import transform_bounds, reproject, Resampling
     from rasterio.transform import from_bounds
     GEOTIFF_SUPPORT = True
 except ImportError:
     GEOTIFF_SUPPORT = False
-    print("Warning: GeoTIFF support not available. Install gdal, rasterio for full functionality.")
+    print("Warning: GeoTIFF support not available. Install rasterio for full functionality.")
 
 from .AppDialogs import (AboutDialog, HeightDialog,
                         BasemapDialog, GeoTiffDialog)
@@ -228,26 +228,80 @@ class GeoTiffLayer:
             print(f"Reprojecting for display:")
             print(f"Target bounds: {target_bounds}")
             print(f"Target size: {target_size}")
+            print(f"Source CRS: {self.crs}")
 
             # Create target transform
             target_transform = from_bounds(*target_bounds, target_size[0],
                                            target_size[1])
+            print(f"Target transform: {target_transform}")
 
             # Prepare output array
             reprojected = np.zeros((3, target_size[1], target_size[0]),
                                    dtype=np.uint8)
 
-            # Reproject each band
-            for i in range(3):
-                reproject(
-                    source=self.data[i],
-                    destination=reprojected[i],
-                    src_transform=self.transform,
-                    src_crs=self.crs,
-                    dst_transform=target_transform,
-                    dst_crs='EPSG:4326',
-                    resampling=Resampling.bilinear
-                )
+            # Check if we need reprojection at all
+            if self.crs and self.crs.to_epsg() == 4326:
+                print(
+                    "Source is already WGS84, using direct transformation")
+                # Direct pixel mapping without CRS transformation
+                src_bounds = self.bounds
+
+                # Calculate scaling factors
+                scale_x = self.data.shape[2] / (
+                            src_bounds[2] - src_bounds[0])
+                scale_y = self.data.shape[1] / (
+                            src_bounds[3] - src_bounds[1])
+
+                # Calculate source pixel coordinates for target bounds
+                src_x_min = int(
+                    (target_bounds[0] - src_bounds[0]) * scale_x)
+                src_x_max = int(
+                    (target_bounds[2] - src_bounds[0]) * scale_x)
+                src_y_min = int((src_bounds[3] - target_bounds[
+                    3]) * scale_y)  # Note: y is flipped
+                src_y_max = int(
+                    (src_bounds[3] - target_bounds[1]) * scale_y)
+
+                # Clamp to valid ranges
+                src_x_min = max(0, min(self.data.shape[2] - 1, src_x_min))
+                src_x_max = max(0, min(self.data.shape[2], src_x_max))
+                src_y_min = max(0, min(self.data.shape[1] - 1, src_y_min))
+                src_y_max = max(0, min(self.data.shape[1], src_y_max))
+
+                print(
+                    f"Source pixel bounds: x({src_x_min}:{src_x_max}), y({src_y_min}:{src_y_max})")
+
+                if src_x_max > src_x_min and src_y_max > src_y_min:
+                    # Extract the relevant portion
+                    cropped_data = self.data[
+                        :, src_y_min:src_y_max, src_x_min:src_x_max]
+                    print(f"Cropped data shape: {cropped_data.shape}")
+
+                    # Resize to target size
+                    from scipy.ndimage import zoom
+                    if cropped_data.shape[1] > 0 and cropped_data.shape[
+                        2] > 0:
+                        zoom_y = target_size[1] / cropped_data.shape[1]
+                        zoom_x = target_size[0] / cropped_data.shape[2]
+
+                        for i in range(3):
+                            reprojected[i] = zoom(cropped_data[i],
+                                                  (zoom_y, zoom_x),
+                                                  order=1)
+
+            else:
+                # Use rasterio reprojection for different CRS
+                print("Using rasterio reprojection")
+                for i in range(3):
+                    reproject(
+                        source=self.data[i],
+                        destination=reprojected[i],
+                        src_transform=self.transform,
+                        src_crs=self.crs,
+                        dst_transform=target_transform,
+                        dst_crs='EPSG:4326',
+                        resampling=Resampling.bilinear
+                    )
 
             self.reprojected_data = reprojected
             self.reprojected_transform = target_transform
@@ -255,6 +309,7 @@ class GeoTiffLayer:
             print(f"Reprojected data shape: {reprojected.shape}")
             print(
                 f"Reprojected data range: {np.min(reprojected)} to {np.max(reprojected)}")
+            print(f"Non-zero pixels: {np.count_nonzero(reprojected)}")
 
             # Create wx.Image - ensure data is contiguous and properly ordered
             # Transpose from (C, H, W) to (H, W, C)
@@ -262,6 +317,8 @@ class GeoTiffLayer:
             height, width = rgb_data.shape[:2]
 
             print(f"RGB data shape for wx.Image: {rgb_data.shape}")
+            print(
+                f"RGB data range: {np.min(rgb_data)} to {np.max(rgb_data)}")
 
             # Ensure data is contiguous
             if not rgb_data.flags['C_CONTIGUOUS']:
@@ -280,7 +337,6 @@ class GeoTiffLayer:
             import traceback
             traceback.print_exc()
             return False
-
 
 # =========================================================================
 
@@ -491,17 +547,41 @@ class MapCanvas(wx.Panel):
         wx.EndBusyCursor()
 
     def geo_to_world(self, lat, lon):
-        """Convert geographic coordinates to world coordinates"""
-        # Simple Web Mercator-like projection for display
-        # This is a simplified projection for visualization only
-        x = (lon - self.geo_center_lon) * 111320 * math.cos(math.radians(self.geo_center_lat))
-        y = (lat - self.geo_center_lat) * 111320
+        """Convert geographic coordinates to world coordinates - FIXED VERSION"""
+        # Use proper Web Mercator projection instead of simple linear scaling
+        # This matches how the map tiles are projected
+
+        # Web Mercator transformation
+        x = (lon - self.geo_center_lon) * 20037508.34 / 180.0
+        lat_rad = math.radians(lat)
+        y = math.log(
+            math.tan((90 + lat) * math.pi / 360.0)) * 20037508.34 / math.pi
+
+        # Center coordinates
+        center_lat_rad = math.radians(self.geo_center_lat)
+        center_y = math.log(math.tan((
+                                                 90 + self.geo_center_lat) * math.pi / 360.0)) * 20037508.34 / math.pi
+
+        # Relative to center
+        y = y - center_y
+
         return x, y
 
     def world_to_geo(self, x, y):
-        """Convert world coordinates to geographic coordinates"""
-        lat = y / 111320 + self.geo_center_lat
-        lon = x / (111320 * math.cos(math.radians(self.geo_center_lat))) + self.geo_center_lon
+        """Convert world coordinates to geographic coordinates - FIXED VERSION"""
+        # Inverse Web Mercator transformation
+
+        # Add center offset back
+        center_lat_rad = math.radians(self.geo_center_lat)
+        center_y = math.log(math.tan((
+                                                 90 + self.geo_center_lat) * math.pi / 360.0)) * 20037508.34 / math.pi
+        y_abs = y + center_y
+
+        # Convert back to lat/lon
+        lon = (x * 180.0 / 20037508.34) + self.geo_center_lon
+        lat = (math.atan(math.exp(
+            y_abs * math.pi / 20037508.34)) * 360.0 / math.pi) - 90
+
         return lat, lon
 
     def on_paint(self, event):
@@ -791,39 +871,70 @@ class MapCanvas(wx.Panel):
         gc.SetPen(wx.Pen(wx.Colour(32, 32, 32), 2, wx.PENSTYLE_SHORT_DASH))
         gc.DrawPath(path)
 
-    def draw_geotiff_layer(self, dc):
-        """Draw the GeoTIFF overlay"""
+
+    def test_simple_overlay(self, dc):
+        """Test overlay with a simple colored rectangle"""
         if self.geotiff_layer.data is None:
             return
 
         try:
-            # Get current view bounds in geographic coordinates
             width, height = self.GetSize()
 
-            # Get corners of current view in world coordinates
-            nw_world = self.screen_to_world(0, 0)
-            se_world = self.screen_to_world(width, height)
+            # Create a simple test image
+            test_image = wx.Image(100, 100)
+            test_image.SetRGB(wx.Rect(0, 0, 100, 100), 255, 0, 0)  # Red rectangle
 
-            # Convert to geographic coordinates
-            nw_lat, nw_lon = self.world_to_geo(*nw_world)
-            se_lat, se_lon = self.world_to_geo(*se_world)
+            bitmap = wx.Bitmap(test_image)
+            dc.DrawBitmap(bitmap, 50, 50)  # Draw at fixed position
+
+            print("Drew test red rectangle")
+
+        except Exception as e:
+            print(f"Error in test overlay: {e}")
+
+    def draw_geotiff_layer(self, dc):
+        """Draw the GeoTIFF overlay - FIXED VERSION"""
+        if self.geotiff_layer.data is None:
+            return
+
+        try:
+            # Use the existing tile coordinate system for consistency
+            width, height = self.GetSize()
+
+            # Get the bounds from the tile system (same as used for map tiles)
+            center_tile_x, center_tile_y = self.lat_lon_to_tile(
+                self.geo_center_lat, self.geo_center_lon, self.geo_zoom
+            )
+
+            # Calculate view bounds in tile coordinates
+            tile_size = self.BASE_TILE_SIZE * self.zoom_level * 2 ** 16 / (
+                        2 ** self.geo_zoom)
+            center_x, center_y = self.world_to_screen(0, 0)
+
+            # Convert screen corners to tile coordinates
+            nw_tile_x = center_tile_x + (0 - center_x) / tile_size
+            nw_tile_y = center_tile_y + (0 - center_y) / tile_size
+            se_tile_x = center_tile_x + (width - center_x) / tile_size
+            se_tile_y = center_tile_y + (height - center_y) / tile_size
+
+            # Convert tile coordinates to lat/lon
+            nw_lat, nw_lon = self.tile_to_lat_lon(nw_tile_x, nw_tile_y,
+                                                  self.geo_zoom)
+            se_lat, se_lon = self.tile_to_lat_lon(se_tile_x, se_tile_y,
+                                                  self.geo_zoom)
 
             # View bounds (west, south, east, north)
             view_bounds = (nw_lon, se_lat, se_lon, nw_lat)
 
-            print(f"View bounds: {view_bounds}")
+            print(f"View bounds (tile-based): {view_bounds}")
             print(f"GeoTIFF bounds: {self.geotiff_layer.bounds}")
 
-            # Check if GeoTIFF bounds intersect with view bounds
+            # Check intersection
             geotiff_bounds = self.geotiff_layer.bounds
-            if not (view_bounds[2] >= geotiff_bounds[
-                0] and  # view east >= geotiff west
-                    view_bounds[0] <= geotiff_bounds[
-                        2] and  # view west <= geotiff east
-                    view_bounds[3] >= geotiff_bounds[
-                        1] and  # view north >= geotiff south
-                    view_bounds[1] <= geotiff_bounds[
-                        3]):  # view south <= geotiff north
+            if not (view_bounds[2] >= geotiff_bounds[0] and
+                    view_bounds[0] <= geotiff_bounds[2] and
+                    view_bounds[3] >= geotiff_bounds[1] and
+                    view_bounds[1] <= geotiff_bounds[3]):
                 print("No intersection between view and GeoTIFF bounds")
                 return
 
@@ -837,63 +948,68 @@ class MapCanvas(wx.Panel):
 
             print(f"Intersection bounds: {intersect_bounds}")
 
-            # Calculate target size for reprojection (limit to reasonable size)
-            # FIXME
-            target_width = min(width, 1024)  # Reduced for testing
+            # Target size
+            target_width = min(width, 1024)
             target_height = min(height, 1024)
 
-            # Reproject for current view
+            # Reproject
             if self.geotiff_layer.reproject_for_display(intersect_bounds,
                                                         (target_width,
                                                          target_height)):
                 if self.geotiff_layer.wx_image and self.geotiff_layer.wx_image.IsOk():
                     print("Drawing GeoTIFF image...")
 
-                    # Calculate screen position
-                    nw_world_img = self.geo_to_world(intersect_bounds[3],
-                                                     intersect_bounds[0])
-                    se_world_img = self.geo_to_world(intersect_bounds[1],
-                                                     intersect_bounds[2])
+                    # Convert intersection bounds to tile coordinates for screen positioning
+                    nw_tile_x_img, nw_tile_y_img = self.lat_lon_to_tile(
+                        intersect_bounds[3], intersect_bounds[0],
+                        self.geo_zoom)  # north, west
+                    se_tile_x_img, se_tile_y_img = self.lat_lon_to_tile(
+                        intersect_bounds[1], intersect_bounds[2],
+                        self.geo_zoom)  # south, east
 
-                    nw_screen = self.world_to_screen(*nw_world_img)
-                    se_screen = self.world_to_screen(*se_world_img)
+                    # Convert to screen coordinates
+                    nw_screen_x = center_x + (
+                                nw_tile_x_img - center_tile_x) * tile_size
+                    nw_screen_y = center_y + (
+                                nw_tile_y_img - center_tile_y) * tile_size
+                    se_screen_x = center_x + (
+                                se_tile_x_img - center_tile_x) * tile_size
+                    se_screen_y = center_y + (
+                                se_tile_y_img - center_tile_y) * tile_size
 
                     print(
-                        f"Screen positions: NW={nw_screen}, SE={se_screen}")
+                        f"Screen positions: NW=({nw_screen_x}, {nw_screen_y}), SE=({se_screen_x}, {se_screen_y})")
 
-                    # Calculate size and position
-                    img_width = abs(se_screen[0] - nw_screen[0])
-                    img_height = abs(se_screen[1] - nw_screen[1])
+                    # Calculate size
+                    img_width = abs(se_screen_x - nw_screen_x)
+                    img_height = abs(se_screen_y - nw_screen_y)
 
                     print(f"Image screen size: {img_width} x {img_height}")
 
                     if img_width > 1 and img_height > 1:
-                        # Scale the image to screen size
+                        # Scale the image
                         scaled_image = self.geotiff_layer.wx_image.Scale(
                             int(img_width), int(img_height),
                             wx.IMAGE_QUALITY_HIGH)
 
-                        # Apply opacity if needed
+                        # Apply opacity
                         if self.geotiff_layer.opacity < 1.0:
                             alpha_value = int(
                                 255 * self.geotiff_layer.opacity)
                             if not scaled_image.HasAlpha():
                                 scaled_image.InitAlpha()
-                            # Set alpha for entire image
                             width_img = scaled_image.GetWidth()
                             height_img = scaled_image.GetHeight()
                             alpha_data = bytes(
                                 [alpha_value] * (width_img * height_img))
                             scaled_image.SetAlpha(alpha_data)
 
-                        # Convert to bitmap and draw
+                        # Draw
                         bitmap = wx.Bitmap(scaled_image)
-
-                        draw_x = int(min(nw_screen[0], se_screen[0]))
-                        draw_y = int(min(nw_screen[1], se_screen[1]))
+                        draw_x = int(min(nw_screen_x, se_screen_x))
+                        draw_y = int(min(nw_screen_y, se_screen_y))
 
                         print(f"Drawing at position: ({draw_x}, {draw_y})")
-
                         dc.DrawBitmap(bitmap, draw_x, draw_y)
 
                     else:
