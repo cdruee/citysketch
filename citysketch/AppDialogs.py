@@ -3,8 +3,10 @@ from numpy import __version__ as numpy_version
 import sys
 import re
 
-from _version import __version__
-from utils import MapProvider
+from ._version import __version__
+from .utils import MapProvider
+
+# =========================================================================
 
 class AboutDialog(wx.Dialog):
     def __init__(self, parent):
@@ -64,6 +66,8 @@ class AboutDialog(wx.Dialog):
         self.SetSizer(szrMain)
 
         szrMain.SetSizeHints(self)
+
+# =========================================================================
 
 class BasemapDialog(wx.Dialog):
     """Dialog for selecting and configuring basemap"""
@@ -176,6 +180,7 @@ class BasemapDialog(wx.Dialog):
 
         return self.provider, lat, lon
 
+# =========================================================================
 
 class HeightDialog(wx.Dialog):
     """Dialog for setting building height"""
@@ -248,3 +253,78 @@ class HeightDialog(wx.Dialog):
         """Get the current values"""
         return self.stories_ctrl.GetValue(), float(
             self.height_ctrl.GetValue())
+
+# =========================================================================
+
+class GeoTiffDialog(wx.Dialog):
+    """Dialog for configuring GeoTIFF overlay settings"""
+
+    def __init__(self, parent, visible=True, opacity=0.7):
+        super().__init__(parent, title="GeoTIFF Settings", size=(350, 250))
+
+        self.visible = visible
+        self.opacity = opacity
+
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Visibility checkbox
+        self.visible_cb = wx.CheckBox(panel, label="Show GeoTIFF overlay")
+        self.visible_cb.SetValue(visible)
+        sizer.Add(self.visible_cb, 0, wx.ALL, 10)
+
+        # Opacity slider
+        opacity_box = wx.StaticBox(panel, label="Opacity")
+        opacity_sizer = wx.StaticBoxSizer(opacity_box, wx.VERTICAL)
+
+        # Create horizontal sizer for slider and value
+        slider_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.opacity_slider = wx.Slider(panel, value=int(opacity * 100),
+                                        minValue=0, maxValue=100,
+                                        style=wx.SL_HORIZONTAL | wx.SL_LABELS)
+        slider_sizer.Add(self.opacity_slider, 1, wx.EXPAND | wx.RIGHT, 5)
+
+        self.opacity_text = wx.StaticText(panel, label=f"{opacity:.0%}")
+        slider_sizer.Add(self.opacity_text, 0, wx.ALIGN_CENTER_VERTICAL)
+
+        opacity_sizer.Add(slider_sizer, 0, wx.EXPAND | wx.ALL, 5)
+        sizer.Add(opacity_sizer, 0,
+                  wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+
+        # Info text
+        info_text = wx.StaticText(panel,
+                                  label="The GeoTIFF overlay will be displayed between\n"
+                                        "the basemap and building layers.")
+        info_text.SetFont(info_text.GetFont().MakeSmaller())
+        sizer.Add(info_text, 0, wx.ALL | wx.ALIGN_CENTER, 10)
+
+        # Buttons
+        btn_sizer = wx.StdDialogButtonSizer()
+        ok_btn = wx.Button(panel, wx.ID_OK)
+        cancel_btn = wx.Button(panel, wx.ID_CANCEL)
+        btn_sizer.AddButton(ok_btn)
+        btn_sizer.AddButton(cancel_btn)
+        btn_sizer.Realize()
+        sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
+
+        panel.SetSizer(sizer)
+
+        # Bind events
+        self.opacity_slider.Bind(wx.EVT_SLIDER, self.on_opacity_changed)
+
+        # Center the dialog
+        self.Centre()
+
+    def on_opacity_changed(self, event):
+        """Handle opacity slider change"""
+        value = self.opacity_slider.GetValue() / 100.0
+        self.opacity_text.SetLabel(f"{value:.0%}")
+
+    def get_values(self):
+        """Get the current values"""
+        visible = self.visible_cb.GetValue()
+        opacity = self.opacity_slider.GetValue() / 100.0
+        return visible, opacity
+
+# =========================================================================

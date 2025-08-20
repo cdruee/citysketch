@@ -19,10 +19,21 @@ from typing import List, Tuple, Optional
 import numpy as np
 import wx
 
-from AppDialogs import AboutDialog, BasemapDialog, HeightDialog
-from Building import Building, BuildingGroup
-from utils import SelectionMode, MapProvider, get_location_with_fallback
-from _version import __version__ as APP_VERSION
+try:
+    from osgeo import gdal, osr
+    import rasterio
+    from rasterio.warp import transform_bounds, reproject, Resampling
+    from rasterio.transform import from_bounds
+    GEOTIFF_SUPPORT = True
+except ImportError:
+    GEOTIFF_SUPPORT = False
+    print("Warning: GeoTIFF support not available. Install gdal, rasterio for full functionality.")
+
+from .AppDialogs import (AboutDialog, HeightDialog,
+                        BasemapDialog, GeoTiffDialog)
+from .Building import Building, BuildingGroup
+from .utils import SelectionMode, MapProvider, get_location_with_fallback
+from ._version import __version__ as APP_VERSION
 
 # =========================================================================
 
@@ -95,6 +106,184 @@ class TileCache:
 
 # =========================================================================
 
+class GeoTiffLayer:
+    """Manages a GeoTIFF overlay layer"""
+
+    def __init__(self):
+        self.filepath = None
+        self.visible = True
+        self.opacity = 0.7
+        self.data = None
+        self.transform = None
+        self.crs = None
+        self.bounds = None  # (west, south, east, north) in WGS84
+        self.wx_image = None
+        self.reprojected_data = None
+        self.reprojected_transform = None
+
+    def load_file(self, filepath):
+        """Load a GeoTIFF file"""
+        if not GEOTIFF_SUPPORT:
+            raise RuntimeError(
+                "GeoTIFF support not available. Please install gdal and rasterio.")
+
+        try:
+            with rasterio.open(filepath) as src:
+                print(f"Loading GeoTIFF: {filepath}")
+                print(
+                    f"Shape: {src.shape}, Bands: {src.count}, CRS: {src.crs}")
+                print(f"Data type: {src.dtypes}, Bounds: {src.bounds}")
+
+                # Read the data with better handling
+                if src.count >= 3:
+                    # RGB or RGBA - read first 3 bands
+                    self.data = src.read([1, 2, 3])
+                elif src.count == 1:
+                    # Grayscale - duplicate to RGB
+                    band = src.read(1)
+                    self.data = np.stack([band, band, band], axis=0)
+                else:
+                    # Read first band and duplicate
+                    band = src.read(1)
+                    self.data = np.stack([band, band, band], axis=0)
+
+                print(f"Data shape after reading: {self.data.shape}")
+                print(
+                    f"Data type: {self.data.dtype}, Min: {np.min(self.data)}, Max: {np.max(self.data)}")
+                print(f"Affine Transformation: {src.transform}")
+                # print(f" ... rotation {src.transform.rotation_angle}")
+
+                self.transform = src.transform
+                self.crs = src.crs
+
+                # Get bounds in WGS84
+                if self.crs and self.crs.to_epsg() != 4326:
+                    self.bounds = transform_bounds(src.crs, 'EPSG:4326',
+                                                   *src.bounds)
+                else:
+                    self.bounds = src.bounds
+
+                print(f"Bounds in WGS84: {self.bounds}")
+
+                self.filepath = filepath
+
+                # Handle different data types and ranges
+                if self.data.dtype == np.uint8:
+                    # Already 8-bit, just ensure it's in 0-255 range
+                    pass
+                elif self.data.dtype == np.uint16:
+                    # 16-bit data, scale down to 8-bit
+                    self.data = (self.data / 256).astype(np.uint8)
+                elif np.issubdtype(self.data.dtype, np.floating):
+                    # Floating point data
+                    data_min = np.nanmin(self.data)
+                    data_max = np.nanmax(self.data)
+                    print(f"Float data range: {data_min} to {data_max}")
+
+                    # Handle common float ranges
+                    if data_max <= 1.0 and data_min >= 0.0:
+                        # Normalized float (0-1), scale to 0-255
+                        self.data = (self.data * 255).astype(np.uint8)
+                    else:
+                        # General float, normalize then scale
+                        if data_max > data_min:
+                            self.data = ((self.data - data_min) / (
+                                        data_max - data_min) * 255).astype(
+                                np.uint8)
+                        else:
+                            self.data = np.full_like(self.data, 128,
+                                                     dtype=np.uint8)
+                else:
+                    # Other integer types, normalize to 0-255
+                    data_min = np.min(self.data)
+                    data_max = np.max(self.data)
+                    if data_max > data_min:
+                        self.data = ((self.data - data_min) / (
+                                    data_max - data_min) * 255).astype(
+                            np.uint8)
+                    else:
+                        self.data = np.full_like(self.data, 128,
+                                                 dtype=np.uint8)
+
+                print(
+                    f"Final data type: {self.data.dtype}, Min: {np.min(self.data)}, Max: {np.max(self.data)}")
+
+                # Handle NoData values
+                if hasattr(src, 'nodata') and src.nodata is not None:
+                    nodata_mask = self.data == src.nodata
+                    self.data[nodata_mask] = 0
+
+                return True
+
+        except Exception as e:
+            print(f"Error in load_file: {e}")
+            raise RuntimeError(f"Failed to load GeoTIFF: {str(e)}")
+
+    def reproject_for_display(self, target_bounds, target_size):
+        """Reproject the GeoTIFF data for display at current view"""
+        if not GEOTIFF_SUPPORT or self.data is None:
+            return False
+
+        try:
+            print(f"Reprojecting for display:")
+            print(f"Target bounds: {target_bounds}")
+            print(f"Target size: {target_size}")
+
+            # Create target transform
+            target_transform = from_bounds(*target_bounds, target_size[0],
+                                           target_size[1])
+
+            # Prepare output array
+            reprojected = np.zeros((3, target_size[1], target_size[0]),
+                                   dtype=np.uint8)
+
+            # Reproject each band
+            for i in range(3):
+                reproject(
+                    source=self.data[i],
+                    destination=reprojected[i],
+                    src_transform=self.transform,
+                    src_crs=self.crs,
+                    dst_transform=target_transform,
+                    dst_crs='EPSG:4326',
+                    resampling=Resampling.bilinear
+                )
+
+            self.reprojected_data = reprojected
+            self.reprojected_transform = target_transform
+
+            print(f"Reprojected data shape: {reprojected.shape}")
+            print(
+                f"Reprojected data range: {np.min(reprojected)} to {np.max(reprojected)}")
+
+            # Create wx.Image - ensure data is contiguous and properly ordered
+            # Transpose from (C, H, W) to (H, W, C)
+            rgb_data = np.transpose(reprojected, (1, 2, 0))
+            height, width = rgb_data.shape[:2]
+
+            print(f"RGB data shape for wx.Image: {rgb_data.shape}")
+
+            # Ensure data is contiguous
+            if not rgb_data.flags['C_CONTIGUOUS']:
+                rgb_data = np.ascontiguousarray(rgb_data)
+
+            # Create wx.Image with explicit data handling
+            self.wx_image = wx.Image(width, height)
+            self.wx_image.SetData(rgb_data.tobytes())
+
+            print(f"Created wx.Image: {width}x{height}")
+
+            return True
+
+        except Exception as e:
+            print(f"Failed to reproject GeoTIFF: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+# =========================================================================
+
 class MapCanvas(wx.Panel):
     """The main canvas for displaying and editing buildings"""
 
@@ -131,6 +320,9 @@ class MapCanvas(wx.Panel):
         self.tile_cache = TileCache()
         self.tiles_loading = set()
         self.map_tiles = {}  # (z,x,y): wx.Image
+
+        # GeoTIFF layer - ADD THIS
+        self.geotiff_layer = GeoTiffLayer()
 
         # Geographic coordinates (center of view)
         lat, lon = get_location_with_fallback()  # user IP location
@@ -298,6 +490,20 @@ class MapCanvas(wx.Panel):
         self.tiles_loading.discard((z, x, y))
         wx.EndBusyCursor()
 
+    def geo_to_world(self, lat, lon):
+        """Convert geographic coordinates to world coordinates"""
+        # Simple Web Mercator-like projection for display
+        # This is a simplified projection for visualization only
+        x = (lon - self.geo_center_lon) * 111320 * math.cos(math.radians(self.geo_center_lat))
+        y = (lat - self.geo_center_lat) * 111320
+        return x, y
+
+    def world_to_geo(self, x, y):
+        """Convert world coordinates to geographic coordinates"""
+        lat = y / 111320 + self.geo_center_lat
+        lon = x / (111320 * math.cos(math.radians(self.geo_center_lat))) + self.geo_center_lon
+        return lat, lon
+
     def on_paint(self, event):
         """Handle paint events"""
         dc = wx.AutoBufferedPaintDC(self)
@@ -307,6 +513,10 @@ class MapCanvas(wx.Panel):
         # Draw map tiles if enabled
         if self.map_provider != MapProvider.NONE:
             self.draw_map_tiles(dc)
+
+        # Draw GeoTIFF layer if loaded - ADD THIS
+        if self.geotiff_layer.visible and self.geotiff_layer.data is not None:
+            self.draw_geotiff_layer(dc)
 
         # Set up graphics context for other drawing
         gc = wx.GraphicsContext.Create(dc)
@@ -581,6 +791,147 @@ class MapCanvas(wx.Panel):
         gc.SetPen(wx.Pen(wx.Colour(32, 32, 32), 2, wx.PENSTYLE_SHORT_DASH))
         gc.DrawPath(path)
 
+    def draw_geotiff_layer(self, dc):
+        """Draw the GeoTIFF overlay"""
+        if self.geotiff_layer.data is None:
+            return
+
+        try:
+            # Get current view bounds in geographic coordinates
+            width, height = self.GetSize()
+
+            # Get corners of current view in world coordinates
+            nw_world = self.screen_to_world(0, 0)
+            se_world = self.screen_to_world(width, height)
+
+            # Convert to geographic coordinates
+            nw_lat, nw_lon = self.world_to_geo(*nw_world)
+            se_lat, se_lon = self.world_to_geo(*se_world)
+
+            # View bounds (west, south, east, north)
+            view_bounds = (nw_lon, se_lat, se_lon, nw_lat)
+
+            print(f"View bounds: {view_bounds}")
+            print(f"GeoTIFF bounds: {self.geotiff_layer.bounds}")
+
+            # Check if GeoTIFF bounds intersect with view bounds
+            geotiff_bounds = self.geotiff_layer.bounds
+            if not (view_bounds[2] >= geotiff_bounds[
+                0] and  # view east >= geotiff west
+                    view_bounds[0] <= geotiff_bounds[
+                        2] and  # view west <= geotiff east
+                    view_bounds[3] >= geotiff_bounds[
+                        1] and  # view north >= geotiff south
+                    view_bounds[1] <= geotiff_bounds[
+                        3]):  # view south <= geotiff north
+                print("No intersection between view and GeoTIFF bounds")
+                return
+
+            # Calculate intersection bounds
+            intersect_bounds = (
+                max(view_bounds[0], geotiff_bounds[0]),  # west
+                max(view_bounds[1], geotiff_bounds[1]),  # south
+                min(view_bounds[2], geotiff_bounds[2]),  # east
+                min(view_bounds[3], geotiff_bounds[3])  # north
+            )
+
+            print(f"Intersection bounds: {intersect_bounds}")
+
+            # Calculate target size for reprojection (limit to reasonable size)
+            # FIXME
+            target_width = min(width, 1024)  # Reduced for testing
+            target_height = min(height, 1024)
+
+            # Reproject for current view
+            if self.geotiff_layer.reproject_for_display(intersect_bounds,
+                                                        (target_width,
+                                                         target_height)):
+                if self.geotiff_layer.wx_image and self.geotiff_layer.wx_image.IsOk():
+                    print("Drawing GeoTIFF image...")
+
+                    # Calculate screen position
+                    nw_world_img = self.geo_to_world(intersect_bounds[3],
+                                                     intersect_bounds[0])
+                    se_world_img = self.geo_to_world(intersect_bounds[1],
+                                                     intersect_bounds[2])
+
+                    nw_screen = self.world_to_screen(*nw_world_img)
+                    se_screen = self.world_to_screen(*se_world_img)
+
+                    print(
+                        f"Screen positions: NW={nw_screen}, SE={se_screen}")
+
+                    # Calculate size and position
+                    img_width = abs(se_screen[0] - nw_screen[0])
+                    img_height = abs(se_screen[1] - nw_screen[1])
+
+                    print(f"Image screen size: {img_width} x {img_height}")
+
+                    if img_width > 1 and img_height > 1:
+                        # Scale the image to screen size
+                        scaled_image = self.geotiff_layer.wx_image.Scale(
+                            int(img_width), int(img_height),
+                            wx.IMAGE_QUALITY_HIGH)
+
+                        # Apply opacity if needed
+                        if self.geotiff_layer.opacity < 1.0:
+                            alpha_value = int(
+                                255 * self.geotiff_layer.opacity)
+                            if not scaled_image.HasAlpha():
+                                scaled_image.InitAlpha()
+                            # Set alpha for entire image
+                            width_img = scaled_image.GetWidth()
+                            height_img = scaled_image.GetHeight()
+                            alpha_data = bytes(
+                                [alpha_value] * (width_img * height_img))
+                            scaled_image.SetAlpha(alpha_data)
+
+                        # Convert to bitmap and draw
+                        bitmap = wx.Bitmap(scaled_image)
+
+                        draw_x = int(min(nw_screen[0], se_screen[0]))
+                        draw_y = int(min(nw_screen[1], se_screen[1]))
+
+                        print(f"Drawing at position: ({draw_x}, {draw_y})")
+
+                        dc.DrawBitmap(bitmap, draw_x, draw_y)
+
+                    else:
+                        print(
+                            f"Image too small to draw: {img_width} x {img_height}")
+                else:
+                    print("wx.Image is not valid")
+            else:
+                print("Reprojection failed")
+
+        except Exception as e:
+            print(f"Error drawing GeoTIFF: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def load_geotiff(self, filepath):
+        """Load a GeoTIFF file"""
+        try:
+            success = self.geotiff_layer.load_file(filepath)
+            if success:
+                self.Refresh()
+                return True
+        except Exception as e:
+            wx.MessageBox(f"Failed to load GeoTIFF: {str(e)}", "Error",
+                          wx.OK | wx.ICON_ERROR)
+        return False
+
+    def set_geotiff_opacity(self, opacity):
+        """Set GeoTIFF layer opacity (0.0 to 1.0)"""
+        self.geotiff_layer.opacity = max(0.0, min(1.0, opacity))
+        self.Refresh()
+
+    def toggle_geotiff_visibility(self):
+        """Toggle GeoTIFF layer visibility"""
+        self.geotiff_layer.visible = not self.geotiff_layer.visible
+        self.Refresh()
+        return self.geotiff_layer.visible
+
     def on_mouse_down(self, event):
         """Handle mouse down events with rotation support"""
         self.mouse_down = True
@@ -843,6 +1194,9 @@ class MainFrame(wx.Frame):
         file_menu.Append(wx.ID_NEW, "&New\tCtrl+N", "Create a new project")
         file_menu.Append(wx.ID_OPEN, "&Open\tCtrl+O",
                          "Open a CityJSON file")
+        geotiff_item = (
+            file_menu.Append(wx.ID_ANY, "Load &GeoTIFF...",
+                                       "Load a GeoTIFF overlay"))
         file_menu.Append(wx.ID_SAVE, "&Save\tCtrl+S",
                          "Save the current project")
         file_menu.Append(wx.ID_SAVEAS, "Save &As...\tCtrl+Shift+S",
@@ -855,6 +1209,10 @@ class MainFrame(wx.Frame):
         edit_menu = wx.Menu()
         basemap_item = edit_menu.Append(wx.ID_ANY, "Select &Basemap",
                                         "Choose a basemap")
+        if GEOTIFF_SUPPORT:
+            edit_menu.AppendSeparator()
+            geotiff_settings_item = edit_menu.Append(wx.ID_ANY, "GeoTIFF &Settings",
+                                                   "Configure GeoTIFF overlay")
         zoom_item = edit_menu.Append(wx.ID_ANY,
                                      "&Zoom to Buildings\tCtrl+0",
                                      "Zoom to fit all buildings")
@@ -878,6 +1236,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_save_as, id=wx.ID_SAVEAS)
         self.Bind(wx.EVT_MENU, self.on_exit, id=wx.ID_EXIT)
         self.Bind(wx.EVT_MENU, self.on_about, id=wx.ID_ABOUT)
+        self.Bind(wx.EVT_MENU, self.on_load_geotiff, id=geotiff_item.GetId())
 
         # Bind edit menu events
         self.Bind(wx.EVT_MENU, self.on_select_basemap,
@@ -886,6 +1245,9 @@ class MainFrame(wx.Frame):
                   id=zoom_item.GetId())
         self.Bind(wx.EVT_MENU, self.on_set_storey_height,
                   id=storey_item.GetId())
+        if GEOTIFF_SUPPORT:
+            self.Bind(wx.EVT_MENU, self.on_geotiff_settings,
+                      id=geotiff_settings_item.GetId())
 
     def create_toolbar(self):
         """Create the toolbar"""
@@ -1327,6 +1689,85 @@ class MainFrame(wx.Frame):
         except Exception as e:
             wx.MessageBox(f"Error saving file: {str(e)}", "Error",
                           wx.OK | wx.ICON_ERROR)
+
+    def on_load_geotiff(self, event):
+        """Load a GeoTIFF file"""
+        if not GEOTIFF_SUPPORT:
+            wx.MessageBox("GeoTIFF support not available.\n\n"
+                          "Please install the following packages:\n"
+                          "- gdal (conda install gdal or pip install gdal)\n"
+                          "- rasterio (pip install rasterio)",
+                          "GeoTIFF Support Missing",
+                          wx.OK | wx.ICON_WARNING)
+            return
+
+        dialog = wx.FileDialog(
+            self,
+            "Load GeoTIFF file",
+            wildcard="GeoTIFF files (*.tif;*.tiff)|*.tif;*.tiff|All files (*.*)|*.*",
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+        )
+
+        if dialog.ShowModal() == wx.ID_OK:
+            filepath = dialog.GetPath()
+
+            # Show progress dialog for large files
+            progress = wx.ProgressDialog("Loading GeoTIFF",
+                                         "Loading and processing GeoTIFF file...",
+                                         maximum=100, parent=self,
+                                         style=wx.PD_AUTO_HIDE | wx.PD_APP_MODAL)
+            progress.Pulse()
+
+            try:
+                success = self.canvas.load_geotiff(filepath)
+                progress.Destroy()
+
+                if success:
+                    self.SetStatusText(
+                        f"Loaded GeoTIFF: {os.path.basename(filepath)}")
+
+                    # Optionally show settings dialog
+                    result = wx.MessageBox(
+                        "GeoTIFF loaded successfully!\n\n"
+                        "Would you like to adjust the overlay settings?",
+                        "GeoTIFF Loaded",
+                        wx.YES_NO | wx.ICON_QUESTION
+                    )
+                    if result == wx.YES:
+                        self.on_geotiff_settings(None)
+                else:
+                    self.SetStatusText("Failed to load GeoTIFF")
+
+            except Exception as e:
+                progress.Destroy()
+                wx.MessageBox(f"Error loading GeoTIFF: {str(e)}", "Error",
+                              wx.OK | wx.ICON_ERROR)
+
+        dialog.Destroy()
+
+    def on_geotiff_settings(self, event):
+        """Show GeoTIFF settings dialog"""
+        if not GEOTIFF_SUPPORT:
+            return
+
+        if self.canvas.geotiff_layer.data is None:
+            wx.MessageBox("No GeoTIFF file loaded.", "No GeoTIFF",
+                          wx.OK | wx.ICON_WARNING)
+            return
+
+        dialog = GeoTiffDialog(self,
+                               self.canvas.geotiff_layer.visible,
+                               self.canvas.geotiff_layer.opacity)
+
+        if dialog.ShowModal() == wx.ID_OK:
+            visible, opacity = dialog.get_values()
+            self.canvas.geotiff_layer.visible = visible
+            self.canvas.set_geotiff_opacity(opacity)
+            self.SetStatusText(
+                f"GeoTIFF: {'Visible' if visible else 'Hidden'}, "
+                f"Opacity: {opacity:.0%}")
+
+        dialog.Destroy()
 
     def on_exit(self, event):
         """Exit the application"""
