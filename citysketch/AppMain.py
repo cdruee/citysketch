@@ -20,7 +20,6 @@ import numpy as np
 import wx
 
 try:
-    import blubb
     import rasterio
     from rasterio.warp import transform_bounds, reproject, Resampling
     from rasterio.transform import from_bounds
@@ -241,8 +240,7 @@ class GeoTiffLayer:
 
             # Check if we need reprojection at all
             if self.crs and self.crs.to_epsg() == 4326:
-                print(
-                    "Source is already WGS84, using direct transformation")
+                print("Source is already WGS84, using direct transformation")
                 # Direct pixel mapping without CRS transformation
                 src_bounds = self.bounds
 
@@ -291,45 +289,220 @@ class GeoTiffLayer:
 
             else:
                 # Use rasterio reprojection for different CRS
-                print("Using rasterio reprojection")
-                for i in range(3):
-                    reproject(
-                        source=self.data[i],
-                        destination=reprojected[i],
-                        src_transform=self.transform,
-                        src_crs=self.crs,
-                        dst_transform=target_transform,
-                        dst_crs='EPSG:4326',
-                        resampling=Resampling.bilinear
-                    )
+                print("Using rasterio reprojection for non-WGS84 data")
+
+                # Try rasterio first (but we know it fails for EPSG:5677)
+                try:
+                    for i in range(3):
+                        reprojected[i], _ = reproject(
+                            source=self.data[i],
+                            destination=reprojected[i],
+                            src_transform=self.transform,
+                            src_crs=self.crs,
+                            dst_transform=target_transform,
+                            dst_crs='EPSG:4326',
+                            resampling=Resampling.bilinear,
+                            src_nodata=None,
+                            dst_nodata=0
+                        )
+
+                    total_nonzero = np.count_nonzero(reprojected)
+                    print(
+                        f"Rasterio reprojection produced {total_nonzero} non-zero pixels")
+
+                except Exception as e:
+                    print(f"Rasterio reprojection failed: {e}")
+                    total_nonzero = 0
+
+                # If rasterio failed or produced no data, use improved manual approach
+                if np.count_nonzero(reprojected) == 0:
+                    print("Using manual transformation...")
+
+                    try:
+                        from rasterio.warp import \
+                            transform as warp_transform
+
+                        height, width = self.data.shape[1], \
+                        self.data.shape[2]
+
+                        # Create coordinate arrays for the entire source image
+                        print("Creating coordinate grids...")
+
+                        # Create meshgrid of all pixel coordinates
+                        px_coords, py_coords = np.meshgrid(
+                            np.arange(width, dtype=np.float64),
+                            np.arange(height, dtype=np.float64)
+                        )
+
+                        # Transform pixel coordinates to source CRS coordinates using the affine transform
+                        src_x_coords = self.transform.c + self.transform.a * px_coords + self.transform.b * py_coords
+                        src_y_coords = self.transform.f + self.transform.d * px_coords + self.transform.e * py_coords
+
+                        print(
+                            f"Source coordinate ranges: X({np.min(src_x_coords):.2f} to {np.max(src_x_coords):.2f}), Y({np.min(src_y_coords):.2f} to {np.max(src_y_coords):.2f})")
+
+                        # Transform to WGS84 in chunks to manage memory
+                        chunk_size = 10000  # Process 10k points at a time
+                        total_pixels = width * height
+                        processed_pixels = 0
+
+                        print("Transforming coordinates to WGS84...")
+
+                        # Flatten arrays for processing
+                        src_x_flat = src_x_coords.flatten()
+                        src_y_flat = src_y_coords.flatten()
+
+                        # Process in chunks
+                        for start_idx in range(0, total_pixels,
+                                               chunk_size):
+                            end_idx = min(start_idx + chunk_size,
+                                          total_pixels)
+
+                            # Transform this chunk
+                            chunk_x = src_x_flat[start_idx:end_idx]
+                            chunk_y = src_y_flat[start_idx:end_idx]
+
+                            try:
+                                wgs84_x_chunk, wgs84_y_chunk = warp_transform(
+                                    self.crs, 'EPSG:4326', chunk_x, chunk_y
+                                )
+
+                                # Filter points within target bounds
+                                mask = ((np.array(wgs84_x_chunk) >=
+                                         target_bounds[0]) &
+                                        (np.array(wgs84_x_chunk) <=
+                                         target_bounds[2]) &
+                                        (np.array(wgs84_y_chunk) >=
+                                         target_bounds[1]) &
+                                        (np.array(wgs84_y_chunk) <=
+                                         target_bounds[3]))
+
+                                if np.any(mask):
+                                    # Get valid points
+                                    valid_wgs84_x = \
+                                    np.array(wgs84_x_chunk)[mask]
+                                    valid_wgs84_y = \
+                                    np.array(wgs84_y_chunk)[mask]
+
+                                    # Calculate corresponding source pixel indices
+                                    valid_indices = \
+                                    np.arange(start_idx, end_idx)[mask]
+                                    src_py_indices = valid_indices // width
+                                    src_px_indices = valid_indices % width
+
+                                    # Calculate target pixel coordinates
+                                    target_x = ((valid_wgs84_x -
+                                                 target_bounds[0]) /
+                                                (target_bounds[2] -
+                                                 target_bounds[0]) *
+                                                target_size[0]).astype(int)
+                                    target_y = ((target_bounds[
+                                                     3] - valid_wgs84_y) /
+                                                (target_bounds[3] -
+                                                 target_bounds[1]) *
+                                                target_size[1]).astype(int)
+
+                                    # Clamp to valid ranges
+                                    valid_target = ((target_x >= 0) & (
+                                                target_x < target_size[
+                                            0]) &
+                                                    (target_y >= 0) & (
+                                                                target_y <
+                                                                target_size[
+                                                                    1]))
+
+                                    if np.any(valid_target):
+                                        # Copy pixel values
+                                        final_src_px = src_px_indices[
+                                            valid_target]
+                                        final_src_py = src_py_indices[
+                                            valid_target]
+                                        final_tgt_x = target_x[
+                                            valid_target]
+                                        final_tgt_y = target_y[
+                                            valid_target]
+
+                                        for i in range(3):
+                                            # Get source pixel values
+                                            src_values = self.data[
+                                                i, final_src_py, final_src_px]
+                                            # Only copy non-zero values
+                                            nonzero_mask = src_values > 0
+                                            if np.any(nonzero_mask):
+                                                reprojected[i, final_tgt_y[
+                                                    nonzero_mask],
+                                                final_tgt_x[
+                                                    nonzero_mask]] = \
+                                                src_values[nonzero_mask]
+
+                            except Exception as chunk_error:
+                                print(
+                                    f"Error processing chunk {start_idx}-{end_idx}: {chunk_error}")
+                                continue
+
+                            processed_pixels += (end_idx - start_idx)
+                            if processed_pixels % 50000 == 0:
+                                print(
+                                    f"Processed {processed_pixels}/{total_pixels} pixels ({100 * processed_pixels / total_pixels:.1f}%)")
+
+                        manual_nonzero = np.count_nonzero(reprojected)
+                        print(
+                            f"Manual transformation produced {manual_nonzero} non-zero pixels")
+
+                        # If still very sparse, try nearest neighbor interpolation
+                        if manual_nonzero < target_size[0] * target_size[
+                            1] * 0.01:  # Less than 1% coverage
+                            print(
+                                "Applying nearest neighbor interpolation to fill gaps...")
+
+                            from scipy.ndimage import binary_dilation
+
+                            for i in range(3):
+                                # Create a mask of valid pixels
+                                valid_mask = reprojected[i] > 0
+                                if np.any(valid_mask):
+                                    # Dilate the valid pixels to fill small gaps
+                                    dilated_mask = binary_dilation(
+                                        valid_mask, iterations=2)
+                                    # Use the dilated area but keep original values where available
+                                    dilated_data = np.where(
+                                        dilated_mask & ~valid_mask,
+                                        np.median(
+                                            reprojected[i][valid_mask]),
+                                        # Fill with median value
+                                        reprojected[i])
+                                    reprojected[i] = dilated_data
+
+                            final_nonzero = np.count_nonzero(reprojected)
+                            print(
+                                f"After interpolation: {final_nonzero} non-zero pixels")
+
+                    except Exception as manual_error:
+                        print(
+                            f"Manual transformation failed: {manual_error}")
+                        import traceback
+                        traceback.print_exc()
 
             self.reprojected_data = reprojected
             self.reprojected_transform = target_transform
 
-            print(f"Reprojected data shape: {reprojected.shape}")
+            print(f"Final reprojected data shape: {reprojected.shape}")
             print(
-                f"Reprojected data range: {np.min(reprojected)} to {np.max(reprojected)}")
-            print(f"Non-zero pixels: {np.count_nonzero(reprojected)}")
+                f"Final reprojected data range: {np.min(reprojected)} to {np.max(reprojected)}")
+            print(
+                f"Final non-zero pixels: {np.count_nonzero(reprojected)}")
 
-            # Create wx.Image - ensure data is contiguous and properly ordered
-            # Transpose from (C, H, W) to (H, W, C)
+            # Create wx.Image
             rgb_data = np.transpose(reprojected, (1, 2, 0))
             height, width = rgb_data.shape[:2]
 
-            print(f"RGB data shape for wx.Image: {rgb_data.shape}")
-            print(
-                f"RGB data range: {np.min(rgb_data)} to {np.max(rgb_data)}")
-
-            # Ensure data is contiguous
             if not rgb_data.flags['C_CONTIGUOUS']:
                 rgb_data = np.ascontiguousarray(rgb_data)
 
-            # Create wx.Image with explicit data handling
             self.wx_image = wx.Image(width, height)
             self.wx_image.SetData(rgb_data.tobytes())
 
             print(f"Created wx.Image: {width}x{height}")
-
             return True
 
         except Exception as e:
@@ -951,6 +1124,10 @@ class MapCanvas(wx.Panel):
             # Target size
             target_width = min(width, 1024)
             target_height = min(height, 1024)
+
+            # Add this in your draw_geotiff_layer method before reprojection:
+            if self.geotiff_layer.debug_coordinate_transform(intersect_bounds, (target_width, target_height)):
+                print("Coordinate transform debug completed")
 
             # Reproject
             if self.geotiff_layer.reproject_for_display(intersect_bounds,
