@@ -20,7 +20,7 @@ import numpy as np
 import wx
 
 from AppDialogs import AboutDialog, BasemapDialog, HeightDialog
-from Building import Building
+from Building import Building, BuildingGroup
 from utils import SelectionMode, MapProvider, get_location_with_fallback
 from _version import __version__ as APP_VERSION
 
@@ -101,6 +101,17 @@ class MapCanvas(wx.Panel):
     BASE_TILE_SIZE = 256
     BASE_GEO_ZOOM = 16
 
+    COL_TILE_EMPTY = wx.Colour(200, 200, 200)
+    COL_TILE_EDGE = wx.Colour(240, 240, 240)
+    COL_GRID = wx.Colour(220, 220, 220)
+    COL_BLDG_IN = wx.Colour(200, 200, 200, 180)
+    COL_BLDG_OUT = wx.Colour(100, 100, 100)
+    COL_BLDG_LBL = wx.Colour(255, 255, 255)
+    COL_SEL_BLDG_IN = wx.Colour(150, 180, 255, 180)
+    COL_SEL_BLDG_OUT = wx.Colour(0, 0, 255)
+    COL_HANDLE_IN = wx.Colour(255, 255, 255)
+    COL_HANDLE_OUT = wx.Colour(0, 0, 255)
+
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
@@ -130,9 +141,9 @@ class MapCanvas(wx.Panel):
         # Interaction state
         self.mouse_down = False
         self.drag_start = None
-        self.drag_building = None
-        self.drag_corner = None
+        self.drag_mode = None
         self.drag_corner_index = None
+        self.selected_buildings = BuildingGroup([])
         self.floating_rect = None
         self.selection_rect_start = None
         self.current_mouse_pos = None
@@ -307,10 +318,20 @@ class MapCanvas(wx.Panel):
         for building in self.buildings:
             self.draw_building(gc, building)
 
+        if len(self.selected_buildings) > 0:
+            # print(self.selected_buildings._x1,
+            #       self.selected_buildings._y1,
+            #       self.selected_buildings._a,
+            #       self.selected_buildings._b,
+            #       self.selected_buildings.rotation * 180/math.pi if self.selected_buildings.rotation is not None else None,
+            #       len(self.selected_buildings))
+            if len(self.selected_buildings) > 1:
+                self.draw_selected_rectangle(gc)
+            self.draw_selected_handles(gc)
+
         # Draw preview for new building
         if self.mode == SelectionMode.ADD_BUILDING and self.floating_rect and self.current_mouse_pos:
             self.draw_building_preview(gc)
-            print (self.floating_rect)
 
         # Draw selection rectangle
         if self.mode == SelectionMode.RECTANGLE_SELECT and self.selection_rect_start and self.current_mouse_pos:
@@ -362,8 +383,8 @@ class MapCanvas(wx.Panel):
                     bitmap = wx.Bitmap(scaled)
                     dc.DrawBitmap(bitmap, int(screen_x), int(screen_y))
                 else:
-                    dc.SetBrush(wx.Brush(wx.Colour(240, 240, 240)))
-                    dc.SetPen(wx.Pen(wx.Colour(200, 200, 200), 1))
+                    dc.SetBrush(wx.Brush(self.COL_TILE_EMPTY))
+                    dc.SetPen(wx.Pen(self.COL_TILE_EDGE, 1))
                     dc.DrawRectangle(int(screen_x), int(screen_y),
                                      int(tile_size), int(tile_size))
 
@@ -376,7 +397,7 @@ class MapCanvas(wx.Panel):
     def draw_grid(self, gc):
         """Draw background grid"""
         if self.map_provider == MapProvider.NONE:
-            gc.SetPen(wx.Pen(wx.Colour(220, 220, 220), 1))
+            gc.SetPen(wx.Pen(self.COL_GRID, 1))
         else:
             gc.SetPen(wx.Pen(wx.Colour(100, 100, 100, 50), 1))
 
@@ -395,7 +416,6 @@ class MapCanvas(wx.Panel):
 
     def draw_building(self, gc, building: Building):
         """Draw a single building with rotation support"""
-        # Get rotated corners
         corners = building.get_corners()
 
         # Create path for rotated rectangle
@@ -406,12 +426,12 @@ class MapCanvas(wx.Panel):
         path.CloseSubpath()
 
         # Set colors based on selection
-        if building.selected:
-            fill_color = wx.Colour(150, 180, 255, 180)
-            border_color = wx.Colour(0, 0, 255)
+        if building in self.selected_buildings:
+            fill_color = self.COL_SEL_BLDG_IN
+            border_color = self.COL_SEL_BLDG_OUT
         else:
-            fill_color = wx.Colour(200, 200, 200, 180)
-            border_color = wx.Colour(100, 100, 100)
+            fill_color = self.COL_BLDG_IN
+            border_color = self.COL_BLDG_OUT
 
         gc.SetBrush(wx.Brush(fill_color))
         gc.SetPen(wx.Pen(border_color, 2))
@@ -424,34 +444,53 @@ class MapCanvas(wx.Panel):
 
         gc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL),
-                   wx.Colour(255, 255, 255))
+                   self.COL_BLDG_LBL)
         text = f"{building.storeys}F"
         tw, th = gc.GetTextExtent(text)
         gc.DrawText(text, scx - tw / 2, scy - th / 2)
 
-        # Draw corner handles if selected
-        if building.selected:
-            # Check if Ctrl is pressed (use rotation mode)
-            ctrl_pressed = wx.GetKeyState(wx.WXK_CONTROL)
+    def draw_selected_rectangle(self, gc):
+        """Draw preview of building being created with rotation support"""
 
-            for i, (cx, cy) in enumerate(corners):
-                sx, sy = self.world_to_screen(cx, cy)
+        # Draw rectangle
+        corners = self.selected_buildings.get_corners()
+        if len(corners) == 0:
+            return
+        path = gc.CreatePath()
+        path.MoveToPoint(self.world_to_screen(*corners[0]))
+        for xx, yy in corners[1:]:
+            path.AddLineToPoint(self.world_to_screen(xx, yy))
+        path.CloseSubpath()
 
-                if ctrl_pressed:
-                    # Draw circles in rotation mode
-                    if i == 0:
-                        # Filled circle for rotation center
-                        gc.SetBrush(wx.Brush(wx.Colour(0, 0, 255)))
-                    else:
-                        # Open circle for other corners
-                        gc.SetBrush(wx.Brush(wx.Colour(255, 255, 255)))
-                    gc.SetPen(wx.Pen(wx.Colour(0, 0, 255), 2))
-                    gc.DrawEllipse(sx - 5, sy - 5, 10, 10)
+        gc.SetBrush(wx.NullBrush)
+        gc.SetPen(wx.Pen(self.COL_SEL_BLDG_OUT, 1, wx.PENSTYLE_DOT))
+        gc.DrawPath(path)
+
+    def draw_selected_handles(self, gc):
+        """ Draw corner handles of selection"""
+        corners = self.selected_buildings.get_corners()
+
+        # Check if Ctrl is pressed (use rotation mode)
+        ctrl_pressed = wx.GetKeyState(wx.WXK_CONTROL)
+
+        for i, (cx, cy) in enumerate(corners):
+            sx, sy = self.world_to_screen(cx, cy)
+
+            if ctrl_pressed:
+                # Draw circles in rotation mode
+                if i == 0:
+                    # Filled circle for rotation center
+                    gc.SetBrush(wx.Brush(self.COL_HANDLE_OUT))
                 else:
-                    # Draw squares in normal mode
-                    gc.SetBrush(wx.Brush(wx.Colour(255, 255, 255)))
-                    gc.SetPen(wx.Pen(wx.Colour(0, 0, 255), 2))
-                    gc.DrawRectangle(sx - 4, sy - 4, 8, 8)
+                    # Open circle for other corners
+                    gc.SetBrush(wx.Brush(self.COL_HANDLE_IN))
+                gc.SetPen(wx.Pen(self.COL_HANDLE_OUT, 2))
+                gc.DrawEllipse(sx - 5, sy - 5, 10, 10)
+            else:
+                # Draw squares in normal mode
+                gc.SetBrush(wx.Brush(self.COL_HANDLE_IN))
+                gc.SetPen(wx.Pen(self.COL_HANDLE_OUT, 2))
+                gc.DrawRectangle(sx - 4, sy - 4, 8, 8)
 
     def draw_building_preview(self, gc):
         """Draw preview of building being created with rotation support"""
@@ -540,11 +579,13 @@ class MapCanvas(wx.Panel):
 
         if self.mode == SelectionMode.ADD_BUILDING:
             if self.floating_rect is None:
+                # 1st click defines first corner (lower left)
                 self.floating_rect = {'anchor': self.snap_point(wx, wy),
                                       'a': 0., 'b': 0., 'r': 0.}
                 self.statusbar.SetStatusText(
                     "Move to draw, press Ctrl to rotate, click to finish")
             else:
+                # 2nd click defines 2n corner (upper right) and adds bldg.
                 x1, y1 = self.floating_rect['anchor']
                 building = Building(
                     id=str(uuid.uuid4()),
@@ -566,27 +607,24 @@ class MapCanvas(wx.Panel):
 
         elif self.mode == SelectionMode.NORMAL:
             if event.ShiftDown():
+                # shift-click on map: start spanning rectangle selection
                 self.mode = SelectionMode.RECTANGLE_SELECT
                 self.selection_rect_start = event.GetPosition()
             else:
-                # Check for corner drag
-                for building in self.buildings:
-                    if building.selected:
-                        corner_idx = building.get_corner_index(wx, wy,
-                                                               10 / self.zoom_level)
-                        if corner_idx is not None:
-                            if ctrl_pressed:
-                                # Rotation mode
-                                self.drag_corner = building
-                                self.drag_corner_index = corner_idx
-                                self.drag_mode = 'rotate'
-                                return
-                            else:
-                                # Normal scaling mode
-                                self.drag_corner = building
-                                self.drag_corner_index = corner_idx
-                                self.drag_mode = 'scale'
-                                return
+                # check for corner drag
+                corner_idx = self.selected_buildings.get_corner_index(
+                    wx, wy, 10 / self.zoom_level)
+                if corner_idx is not None:
+                    if ctrl_pressed:
+                        # Rotation mode
+                        self.drag_corner_index = corner_idx
+                        self.drag_mode = 'rotate'
+                        return
+                    else:
+                        # Normal scaling mode
+                        self.drag_corner_index = corner_idx
+                        self.drag_mode = 'scale'
+                        return
 
                 # Check for building click
                 clicked_building = None
@@ -596,15 +634,24 @@ class MapCanvas(wx.Panel):
                         break
 
                 if clicked_building:
-                    if not event.ControlDown():
-                        for b in self.buildings:
-                            b.selected = False
-                    clicked_building.selected = not clicked_building.selected if event.ControlDown() else True
-                    self.drag_building = clicked_building
+                    # a building was clicked
+                    if ctrl_pressed:
+                        # Ctrl held down
+                        if clicked_building in self.selected_buildings:
+                            # remove building from selecetion
+                            self.selected_buildings.remove(clicked_building)
+                        else:
+                            # add unselected building to selection
+                            self.selected_buildings.add(clicked_building)
+                    else:
+                        # Not Key held down
+                        # select solely this building
+                        self.selected_buildings = BuildingGroup([clicked_building])
+                    self.drag_mode = 'translate'
                 else:
-                    if not event.ControlDown():
-                        for b in self.buildings:
-                            b.selected = False
+                    # no building was clicked
+                    # unselect all
+                    self.selected_buildings = BuildingGroup([])
 
                 self.Refresh()
 
@@ -623,14 +670,12 @@ class MapCanvas(wx.Panel):
                 le, lo, ri, up = building.get_llur()
                 if (le >= rx1 and ri <= rx2 and
                         lo >= ry1 and up <= ry2):
-                    building.selected = True
+                    self.selected_buildings.add(building)
 
             self.mode = SelectionMode.NORMAL
             self.selection_rect_start = None
             self.Refresh()
 
-        self.drag_building = None
-        self.drag_corner = None
         self.drag_corner_index = None
         self.drag_mode = None
         self.drag_start = None
@@ -641,33 +686,29 @@ class MapCanvas(wx.Panel):
         wx, wy = self.screen_to_world(event.GetX(), event.GetY())
 
         if self.mouse_down and self.drag_start:
-            if self.drag_corner and self.drag_corner_index is not None:
-                snapped_x, snapped_y = self.snap_point(wx, wy,
-                                                           self.drag_corner)
-                if self.drag_mode == 'scale':
-                    self.drag_corner.scale_to_corner(
-                        self.drag_corner_index, snapped_x, snapped_y)
-                elif self.drag_mode == 'rotate':
-                    self.drag_corner.rotate_to_corner(
-                        self.drag_corner_index, snapped_x, snapped_y)
-                self.Refresh()
-            elif self.drag_building:
+            # mouse id being dragged
+            snapped_x, snapped_y = self.snap_point(wx, wy)
+            if self.drag_mode == 'scale':
+                self.selected_buildings.scale_to_corner(
+                    self.drag_corner_index, snapped_x, snapped_y)
+            elif self.drag_mode == 'rotate':
+                self.selected_buildings.rotate_to_corner(
+                    self.drag_corner_index, snapped_x, snapped_y)
+            elif self.drag_mode == 'translate':
                 # Moving building
                 start_wx, start_wy = self.screen_to_world(*self.drag_start)
                 dx = wx - start_wx
                 dy = wy - start_wy
 
-                new_x1 = self.drag_building.x1 + dx
-                new_y1 = self.drag_building.y1 + dy
-                snapped_x, snapped_y = self.snap_point(new_x1, new_y1,
-                                                       self.drag_building)
+                new_x1 = self.selected_buildings.x1 + dx
+                new_y1 = self.selected_buildings.y1 + dy
+                snapped_x, snapped_y = self.snap_point(new_x1, new_y1)
 
-                actual_dx = snapped_x - self.drag_building.x1
-                actual_dy = snapped_y - self.drag_building.y1
+                actual_dx = snapped_x - self.selected_buildings.x1
+                actual_dy = snapped_y - self.selected_buildings.y1
 
-                self.drag_building.shift(actual_dx, actual_dy)
+                self.selected_buildings.shift(actual_dx, actual_dy)
                 self.drag_start = event.GetPosition()
-                self.Refresh()
             elif not event.ShiftDown():
                 # Panning
                 dx = event.GetX() - self.drag_start[0]
@@ -675,7 +716,7 @@ class MapCanvas(wx.Panel):
                 self.pan_x += dx
                 self.pan_y += dy
                 self.drag_start = event.GetPosition()
-                self.Refresh()
+            self.Refresh()
 
         # Update preview
         if self.mode == SelectionMode.ADD_BUILDING and self.floating_rect:
@@ -685,7 +726,7 @@ class MapCanvas(wx.Panel):
             self.Refresh()
 
         # Update corner appearance when Ctrl is pressed/released
-        if any(b.selected for b in self.buildings):
+        if len(self.selected_buildings) > 0:
             self.Refresh()
 
     def on_mouse_wheel(self, event):
@@ -713,15 +754,16 @@ class MapCanvas(wx.Panel):
 
     def set_building_stories(self, stories: int):
         """Set stories for selected buildings"""
-        for building in self.buildings:
-            if building.selected:
-                building.storeys = stories
-                building.height = stories * self.storey_height
+        for building in self.selected_buildings:
+            building.storeys = stories
+            building.height = stories * self.storey_height
         self.Refresh()
 
     def delete_selected_buildings(self):
         """Delete selected buildings"""
-        self.buildings = [b for b in self.buildings if not b.selected]
+        for b in self.selected_buildings.buildings.copy():
+            self.selected_buildings.remove(b)
+            self.buildings = [x for x in self.buildings if x != b]
         self.Refresh()
 
     def zoom_to_buildings(self):
@@ -920,8 +962,7 @@ class MainFrame(wx.Frame):
 
     def on_set_height(self, event):
         """Open height setting dialog"""
-        selected = [b for b in self.canvas.buildings if b.selected]
-        if not selected:
+        if self.canvas.selected_buildings is None or len.se:
             wx.MessageBox("Please select at least one building",
                           "No Selection",
                           wx.OK | wx.ICON_WARNING)
