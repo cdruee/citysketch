@@ -205,11 +205,9 @@ class BuildingGroup:
             self._a = self._b = None
             self._xr = self._yr = None
             self._rotation = None
-            print(self._rotation)
             return
         elif len(self.buildings) == 1:
             self._rotation = self.buildings[0].rotation
-            print(self._rotation)
         else:
             meds=[]
             rots = [b.rotation for b in self.buildings]
@@ -220,7 +218,6 @@ class BuildingGroup:
                     ) - dr
                 )
             self._rotation = statistics.median(meds)
-            print(self._rotation, meds, rots)
 
         all_corners = [y for x in self.buildings for y in x.get_corners()]
         # preliminary anchor coordinate
@@ -243,6 +240,7 @@ class BuildingGroup:
         # rotation center is anchor
         self._rx = self._x1
         self._ry = self._y1
+        print(self._x1, self._y1, self._a, self._b, self._rotation)
 
     def add(self, building: Building):
         """Add a building to the group,
@@ -295,6 +293,73 @@ class BuildingGroup:
         """Get which corner is near the point (0-3), None if no corner"""
         return _get_corner_index(self, x, y, threshold=threshold)
 
+    def rotate_to_corner(self, corner_index: int, new_x: float,
+                         new_y: float):
+        """Rotate the building so that the specified corner moves to target point"""
+        if corner_index != 0:
+            old_x, old_y = self.get_corners()[corner_index]
+            old_angle = math.atan2(old_y - self.y1, old_x - self.x1)
+            old_dist = math.sqrt((old_x - self.x1) ** 2 +
+                                 (old_y - self.y1) ** 2)
+            new_angle = math.atan2(new_y - self.y1, new_x - self.x1)
+            new_dist = math.sqrt((new_x - self.x1) ** 2 +
+                                 (new_y - self.y1) ** 2)
+            dr = new_angle - old_angle
+            scale = new_dist / old_dist
+
+            for b in self.buildings:
+                # rotate building
+                b.rotation = b.rotation + dr
+                # scale building
+                b.a = b.a * scale
+                b.b = b.b * scale
+                # transform distance to vertex
+                x_old_grp, y_old_grp = word_to_building(self, b.x1, b.y1)
+                x_new_grp = scale * (math.cos(dr) * x_old_grp -
+                                     math.sin(dr) * y_old_grp)
+                y_new_grp = scale * (math.sin(dr) * x_old_grp +
+                                     math.cos(dr) * y_old_grp)
+                b.x1, b.y1 = building_to_world(self, x_new_grp, y_new_grp)
+            self.update_buildings()
+        else:
+            pass
+
+
+
+    def scale_to_corner(self, corner_index: int, new_x: float,
+                        new_y: float):
+        """Move a specific corner (for scaling / rotation)"""
+        am, bm = word_to_building(self, new_x, new_y)
+        print(am,bm)
+        if corner_index != 0:
+            scale_a = 1.
+            scale_b = 1.
+            if corner_index in [1, 2]:
+                scale_a = am / self._a
+            if corner_index in [2, 3]:
+                scale_b = bm / self._b
+            for b in self.buildings:
+                # scale building size
+                b.a = b.a * scale_a
+                b.b = b.b * scale_b
+                # scale distance to vertex
+                x_old_grp, y_old_grp = word_to_building(self, b.x1, b.y1)
+                x_new_grp = x_old_grp * scale_a
+                y_new_grp = y_old_grp * scale_b
+                b.x1, b.y1 = building_to_world(self, x_new_grp, y_new_grp)
+            # # save new group size
+            # self._a *= scale_a
+            # self._b *= scale_b
+            self.update_buildings()
+        else:
+            self.translate(new_x, new_y)
+
+    def translate(self, new_x: float, new_y: float):
+        """Move the building to the new position"""
+        dx = new_x - self._x1
+        dy = new_y - self._y1
+        self.shift(dx, dy)
+
     def shift(self, dx: float, dy: float):
         for b in self.buildings:
             b.shift(dx, dy)
@@ -339,7 +404,7 @@ def _get_corner_index(obj, x: float, y: float,
         if math.sqrt((x - cx) ** 2 + (y - cy) ** 2) < threshold:
             return i
     return None
-    
+
 # -------------------------------------------------------------------------
 
 def word_to_building(obj, x: float, y: float

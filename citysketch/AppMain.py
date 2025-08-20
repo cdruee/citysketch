@@ -162,29 +162,41 @@ class MapCanvas(wx.Panel):
 
     def screen_to_world(self, x: float, y: float) -> Tuple[float, float]:
         """Convert screen coordinates to world coordinates"""
-        wx = (x - self.pan_x) / self.zoom_level
-        wy = (y - self.pan_y) / self.zoom_level
+        size_x, size_y = self.GetSize()
+        plot_x = x
+        plot_y = size_y - y
+        wx = (plot_x - self.pan_x) / self.zoom_level
+        wy = (plot_y + self.pan_y) / self.zoom_level
         return wx, wy
 
     def world_to_screen(self, x: float, y: float) -> Tuple[float, float]:
         """Convert world coordinates to screen coordinates"""
-        sx = x * self.zoom_level + self.pan_x
-        sy = y * self.zoom_level + self.pan_y
+        plot_x = x * self.zoom_level + self.pan_x
+        plot_y = y * self.zoom_level - self.pan_y
+        size_x, size_y = self.GetSize()
+        sx = plot_x
+        sy = size_y - plot_y
         return sx, sy
 
     def snap_point(self, x: float, y: float,
-                   exclude_building: Optional[Building] = None) -> Tuple[
-        float, float]:
+                   exclude: Optional[Building | BuildingGroup] = None
+                   ) -> Tuple[float, float]:
         """Snap a point to nearby building features"""
         if not self.snap_enabled:
             return x, y
+
+        # make `in` work for single buidling
+        if exclude is None:
+            exclude = []
+        elif isinstance(exclude, Building):
+            exclude = [exclude]
 
         snap_threshold = 15 / self.zoom_level
         best_x, best_y = x, y
         best_dist = snap_threshold
 
         for building in self.buildings:
-            if building == exclude_building:
+            if building in exclude:
                 continue
 
             # Snap to corners
@@ -194,8 +206,7 @@ class MapCanvas(wx.Panel):
                     best_x, best_y = cx, cy
                     best_dist = dist
 
-            # Snap to edges
-            # FIXME
+            # TODO Snap to edges
             # if abs(x - building.x1) < best_dist:
             #     best_x = building.x1
             #     best_dist = abs(x - building.x1)
@@ -476,20 +487,19 @@ class MapCanvas(wx.Panel):
         for i, (cx, cy) in enumerate(corners):
             sx, sy = self.world_to_screen(cx, cy)
 
+            if i == 0:
+                # Filled circle for rotation center
+                gc.SetBrush(wx.Brush(self.COL_HANDLE_OUT))
+            else:
+                # Open circle for other corners
+                gc.SetBrush(wx.Brush(self.COL_HANDLE_IN))
+            # outline pen
+            gc.SetPen(wx.Pen(self.COL_HANDLE_OUT, 2))
             if ctrl_pressed:
                 # Draw circles in rotation mode
-                if i == 0:
-                    # Filled circle for rotation center
-                    gc.SetBrush(wx.Brush(self.COL_HANDLE_OUT))
-                else:
-                    # Open circle for other corners
-                    gc.SetBrush(wx.Brush(self.COL_HANDLE_IN))
-                gc.SetPen(wx.Pen(self.COL_HANDLE_OUT, 2))
                 gc.DrawEllipse(sx - 5, sy - 5, 10, 10)
             else:
                 # Draw squares in normal mode
-                gc.SetBrush(wx.Brush(self.COL_HANDLE_IN))
-                gc.SetPen(wx.Pen(self.COL_HANDLE_OUT, 2))
                 gc.DrawRectangle(sx - 4, sy - 4, 8, 8)
 
     def draw_building_preview(self, gc):
@@ -532,6 +542,7 @@ class MapCanvas(wx.Panel):
         # Draw rotated preview
         path = gc.CreatePath()
         sx, sy = self.world_to_screen(x1, y1)
+        print (sx, sy)
         path.MoveToPoint(sx, sy)
         for ca, cb in corners[1:]:
             x = x1 + math.cos(new_r) * ca - math.sin(new_r) * cb
@@ -645,8 +656,12 @@ class MapCanvas(wx.Panel):
                             self.selected_buildings.add(clicked_building)
                     else:
                         # Not Key held down
-                        # select solely this building
-                        self.selected_buildings = BuildingGroup([clicked_building])
+                        if clicked_building in self.selected_buildings:
+                            # do nothing
+                            pass
+                        else:
+                            # select solely this building
+                            self.selected_buildings = BuildingGroup([clicked_building])
                     self.drag_mode = 'translate'
                 else:
                     # no building was clicked
@@ -687,7 +702,9 @@ class MapCanvas(wx.Panel):
 
         if self.mouse_down and self.drag_start:
             # mouse id being dragged
-            snapped_x, snapped_y = self.snap_point(wx, wy)
+            snapped_x, snapped_y = self.snap_point(
+                wx, wy, exclude=self.selected_buildings)
+
             if self.drag_mode == 'scale':
                 self.selected_buildings.scale_to_corner(
                     self.drag_corner_index, snapped_x, snapped_y)
@@ -702,7 +719,8 @@ class MapCanvas(wx.Panel):
 
                 new_x1 = self.selected_buildings.x1 + dx
                 new_y1 = self.selected_buildings.y1 + dy
-                snapped_x, snapped_y = self.snap_point(new_x1, new_y1)
+                snapped_x, snapped_y = self.snap_point(
+                    new_x1, new_y1, exclude=self.selected_buildings)
 
                 actual_dx = snapped_x - self.selected_buildings.x1
                 actual_dy = snapped_y - self.selected_buildings.y1
@@ -962,21 +980,21 @@ class MainFrame(wx.Frame):
 
     def on_set_height(self, event):
         """Open height setting dialog"""
-        if self.canvas.selected_buildings is None or len.se:
+        if len(self.canvas.selected_buildings) > 0:
             wx.MessageBox("Please select at least one building",
                           "No Selection",
                           wx.OK | wx.ICON_WARNING)
             return
 
         # Get current values from first selected building
-        stories = selected[0].storeys
-        height = selected[0].height
+        stories = self.canvas.selected_buildings[0].storeys
+        height = self.canvas.selected_buildings[0].height
 
         dialog = HeightDialog(self, stories, height,
                               self.canvas.storey_height)
         if dialog.ShowModal() == wx.ID_OK:
             new_stories, new_height = dialog.get_values()
-            for building in selected:
+            for building in self.canvas.selected_buildings:
                 building.storeys = new_stories
                 building.height = new_height
             self.canvas.Refresh()
@@ -986,19 +1004,18 @@ class MainFrame(wx.Frame):
 
     def on_delete(self, event):
         """Delete selected buildings"""
-        selected = [b for b in self.canvas.buildings if b.selected]
-        if not selected:
-            return
 
         result = wx.MessageBox(
-            f"Are you sure you want to delete {len(selected)} building(s)?",
+            f"Are you sure you want to delete "
+            f"{len(self.canvas.selected_buildings)} building(s)?",
             "Confirm Delete",
             wx.YES_NO | wx.ICON_QUESTION
         )
 
         if result == wx.YES:
             self.canvas.delete_selected_buildings()
-            self.SetStatusText(f"Deleted {len(selected)} building(s)")
+            self.SetStatusText(f"Deleted "
+            f"{len(self.canvas.selected_buildings)} building(s).")
 
     def on_zoom_in(self, event):
         """Zoom in"""
