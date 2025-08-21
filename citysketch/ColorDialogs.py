@@ -503,7 +503,7 @@ class ColorSettingsDialog(wx.Dialog):
 
         for key in self.color_settings.get_all_keys():
             definition = self.color_settings.get_definition(key)
-            color = self.color_settings.get_color(key)
+            color = self.color_settings.get(key)
 
             # Create horizontal sizer for this color row
             row_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -549,7 +549,7 @@ class ColorSettingsDialog(wx.Dialog):
     def on_color_button_clicked(self, event, key):
         """Handle color button click"""
         definition = self.color_settings.get_definition(key)
-        current_color = self.color_settings.get_color(key)
+        current_color = self.color_settings.get(key)
 
         # Open color picker dialog
         dialog = ColorPickerDialog(self,
@@ -557,7 +557,7 @@ class ColorSettingsDialog(wx.Dialog):
                                    current_color)
         if dialog.ShowModal() == wx.ID_OK:
             new_color = dialog.get_color()
-            self.color_settings.set_color(key, new_color)
+            self.color_settings.set(key, new_color)
 
             # Refresh the display
             self.populate_colors()  # Repopulate to update colors

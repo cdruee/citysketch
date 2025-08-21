@@ -33,7 +33,7 @@ from .AppDialogs import (AboutDialog, HeightDialog,
                         BasemapDialog, GeoTiffDialog)
 from .App3dview import OPENGL_SUPPORT, Building3DViewer
 from .Building import Building, BuildingGroup
-from .ColorSettings import colorset
+from .AppSettings import colorset, settings
 from .ColorDialogs import ColorSettingsDialog
 from .utils import SelectionMode, MapProvider, get_location_with_fallback
 from ._version import __version__, __version_tuple__
@@ -765,7 +765,7 @@ class MapCanvas(wx.Panel):
         # Add center offset back
         center_lat_rad = math.radians(self.geo_center_lat)
         center_y = math.log(math.tan((
-                                                 90 + self.geo_center_lat) * math.pi / 360.0)) * 20037508.34 / math.pi
+                                             90 + self.geo_center_lat) * math.pi / 360.0)) * 20037508.34 / math.pi
         y_abs = y + center_y
 
         # Convert back to lat/lon
@@ -811,12 +811,6 @@ class MapCanvas(wx.Panel):
             self.draw_building(gc, building)
 
         if len(self.selected_buildings) > 0:
-            # print(self.selected_buildings._x1,
-            #       self.selected_buildings._y1,
-            #       self.selected_buildings._a,
-            #       self.selected_buildings._b,
-            #       self.selected_buildings.rotation * 180/math.pi if self.selected_buildings.rotation is not None else None,
-            #       len(self.selected_buildings))
             if len(self.selected_buildings) > 1:
                 self.draw_selected_rectangle(gc)
             self.draw_selected_handles(gc)
@@ -876,10 +870,10 @@ class MapCanvas(wx.Panel):
                     dc.DrawBitmap(bitmap, int(screen_x), int(screen_y))
                 else:
                     dc.SetBrush(wx.Brush(
-                        colorset.get_color('COL_TILE_EMPTY')))
+                        colorset.get('COL_TILE_EMPTY')))
                     dc.SetPen(
                         wx.Pen(
-                            colorset.get_color('COL_TILE_EDGE'), 1))
+                            colorset.get('COL_TILE_EDGE'), 1))
                     dc.DrawRectangle(int(screen_x), int(screen_y),
                                      int(tile_size), int(tile_size))
 
@@ -892,7 +886,7 @@ class MapCanvas(wx.Panel):
     def draw_grid(self, gc):
         """Draw background grid"""
         if self.map_provider == MapProvider.NONE:
-            gc.SetPen(wx.Pen(colorset.get_color('COL_GRID'), 1))
+            gc.SetPen(wx.Pen(colorset.get('COL_GRID'), 1))
         else:
             gc.SetPen(wx.Pen(wx.Colour(100, 100, 100, 50), 1))
 
@@ -922,11 +916,11 @@ class MapCanvas(wx.Panel):
 
         # Set colors based on selection
         if building in self.selected_buildings:
-            fill_color = colorset.get_color('COL_SEL_BLDG_IN')
-            border_color = colorset.get_color('COL_SEL_BLDG_OUT')
+            fill_color = colorset.get('COL_SEL_BLDG_IN')
+            border_color = colorset.get('COL_SEL_BLDG_OUT')
         else:
-            fill_color = colorset.get_color('COL_BLDG_IN')
-            border_color = colorset.get_color('COL_BLDG_OUT')
+            fill_color = colorset.get('COL_BLDG_IN')
+            border_color = colorset.get('COL_BLDG_OUT')
 
         gc.SetBrush(wx.Brush(fill_color))
         gc.SetPen(wx.Pen(border_color, 2))
@@ -939,7 +933,7 @@ class MapCanvas(wx.Panel):
 
         gc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL),
-                   colorset.get_color('COL_BLDG_LBL'))
+                   colorset.get('COL_BLDG_LBL'))
         text = f"{building.storeys}F"
         tw, th = gc.GetTextExtent(text)
         gc.DrawText(text, scx - tw / 2, scy - th / 2)
@@ -958,7 +952,7 @@ class MapCanvas(wx.Panel):
         path.CloseSubpath()
 
         gc.SetBrush(wx.NullBrush)
-        gc.SetPen(wx.Pen(colorset.get_color('COL_SEL_BLDG_OUT'), 1, wx.PENSTYLE_DOT))
+        gc.SetPen(wx.Pen(colorset.get('COL_SEL_BLDG_OUT'), 1, wx.PENSTYLE_DOT))
         gc.DrawPath(path)
 
     def draw_selected_handles(self, gc):
@@ -973,12 +967,12 @@ class MapCanvas(wx.Panel):
 
             if i == 0:
                 gc.SetBrush(
-                    wx.Brush(colorset.get_color('COL_HANDLE_OUT')))
+                    wx.Brush(colorset.get('COL_HANDLE_OUT')))
             else:
                 gc.SetBrush(
-                    wx.Brush(colorset.get_color('COL_HANDLE_IN')))
+                    wx.Brush(colorset.get('COL_HANDLE_IN')))
             gc.SetPen(
-                wx.Pen(colorset.get_color('COL_HANDLE_OUT'), 2))
+                wx.Pen(colorset.get('COL_HANDLE_OUT'), 2))
             if ctrl_pressed:
                 # Draw circles in rotation mode
                 gc.DrawEllipse(sx - 5, sy - 5, 10, 10)
@@ -1007,7 +1001,7 @@ class MapCanvas(wx.Panel):
             # new_a = self.floating_rect['a'] * dist/old_dist
             # new_b = self.floating_rect['b'] * dist/old_dist
             new_r = angle - math.atan2(new_b, new_a)
-        
+
         else:
             # Scaling mode during creation
             dx = x2 - x1
@@ -1015,7 +1009,7 @@ class MapCanvas(wx.Panel):
             new_r = self.floating_rect['r']
             new_a = + math.cos(new_r) * dx + math.sin(new_r) * dy
             new_b = - math.sin(new_r) * dx + math.cos(new_r) * dy
-            
+
         corners = [
             (0., 0.),
             (new_a, 0.),
@@ -1026,7 +1020,6 @@ class MapCanvas(wx.Panel):
         # Draw rotated preview
         path = gc.CreatePath()
         sx, sy = self.world_to_screen(x1, y1)
-        print (sx, sy)
         path.MoveToPoint(sx, sy)
         for ca, cb in corners[1:]:
             x = x1 + math.cos(new_r) * ca - math.sin(new_r) * cb
@@ -1035,8 +1028,8 @@ class MapCanvas(wx.Panel):
             path.AddLineToPoint(sx, sy)
         path.CloseSubpath()
 
-        gc.SetBrush(wx.Brush(colorset.get_color('COL_FLOAT_IN')))
-        gc.SetPen(wx.Pen(colorset.get_color('COL_FLOAT_OUT'),
+        gc.SetBrush(wx.Brush(colorset.get('COL_FLOAT_IN')))
+        gc.SetPen(wx.Pen(colorset.get('COL_FLOAT_OUT'),
                          2, wx.PENSTYLE_DOT))
         gc.DrawPath(path)
 
@@ -1453,26 +1446,36 @@ class MapCanvas(wx.Panel):
         if not self.buildings:
             return
 
-        min_x = min(b.get_llur()[0] for b in self.buildings)
-        max_x = min(b.get_llur()[2] for b in self.buildings)
-        min_y = min(b.get_llur()[1] for b in self.buildings)
-        max_y = min(b.get_llur()[3] for b in self.buildings)
+        xw_min = min(b.get_llur()[0] for b in self.buildings)
+        yw_min = min(b.get_llur()[1] for b in self.buildings)
+        xw_max = max(b.get_llur()[2] for b in self.buildings)
+        yw_max = max(b.get_llur()[3] for b in self.buildings)
 
         width, height = self.GetSize()
         margin = 50
 
+        xs_center = width / 2
+        ys_center = height / 2
+
         zoom_x = (width - 2 * margin) / (
-                    max_x - min_x) if max_x > min_x else 1.0
+                    xw_max - xw_min) if xw_max > xw_min else 1.0
         zoom_y = (height - 2 * margin) / (
-                    max_y - min_y) if max_y > min_y else 1.0
+                    yw_max - yw_min) if yw_max > yw_min else 1.0
 
         self.zoom_level = min(zoom_x, zoom_y, 5.0)
 
-        center_x = (min_x + max_x) / 2
-        center_y = (min_y + max_y) / 2
+        xw_focus = (xw_min + xw_max) / 2
+        yw_focus = (yw_min + yw_max) / 2
 
-        self.pan_x = width / 2 - center_x * self.zoom_level
-        self.pan_y = height / 2 - center_y * self.zoom_level
+        xs_focus, ys_focus  = self.world_to_screen(xw_focus, yw_focus)
+
+        dxs = xs_center - xs_focus
+        dys = ys_center - ys_focus
+
+        # self.pan_x = width / 2 - xw_focus * self.zoom_level
+        # self.pan_y = height / 2 - yw_focus * self.zoom_level
+        self.pan_x += dxs
+        self.pan_y += dys
 
         self.Refresh()
 
@@ -1744,17 +1747,23 @@ class MainFrame(wx.Frame):
             self.SetStatusText(f"Deleted "
             f"{len(self.canvas.selected_buildings)} building(s).")
 
-    def on_zoom_in(self, event):
-        """Zoom in"""
-        self.canvas.zoom_level *= 1.2
+    def zoom_view(self, factor):
+        self.canvas.zoom_level *= factor
+        width, height = self.canvas.GetSize()
+        self.canvas.pan_x -= width * (factor - 1.) / 2.
+        self.canvas.pan_y += height * (factor - 1.) / 2.
         self.canvas.zoom_level = min(10.0, self.canvas.zoom_level)
         self.canvas.Refresh()
 
+    def on_zoom_in(self, event):
+        """Zoom in"""
+        factor = (100. + float(settings.get('ZOOM_STEP_PERCENT'))) / 100.
+        return self.zoom_view(factor)
+
     def on_zoom_out(self, event):
         """Zoom out"""
-        self.canvas.zoom_level /= 1.2
-        self.canvas.zoom_level = max(0.1, self.canvas.zoom_level)
-        self.canvas.Refresh()
+        factor = 100. / (100. + float(settings.get('ZOOM_STEP_PERCENT')))
+        return self.zoom_view(factor)
 
     def on_zoom_to_buildings(self, event):
         """Zoom to fit all buildings"""

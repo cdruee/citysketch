@@ -16,7 +16,7 @@ except ImportError:
     print("Warning: OpenGL support not available. "
           "Install PyOpenGL for 3D view.")
 
-from .ColorSettings import colorset
+from .AppSettings import colorset
 
 # =========================================================================
 
@@ -435,12 +435,12 @@ class Building3DViewer(wx.Dialog):
 
     def draw_building_solid(self, building):
         return self.draw_building(
-            building, color=colorset.get_color('COL_SEL_BLDG_IN')
+            building, color=colorset.get('COL_SEL_BLDG_IN')
         )
 
     def draw_building_transparent(self, building):
         return self.draw_building(
-            building, color=colorset.get_color('COL_BLDG_IN'),
+            building, color=colorset.get('COL_BLDG_IN'),
             solid=0.25,
             faces=False
         )

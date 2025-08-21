@@ -240,7 +240,6 @@ class BuildingGroup:
         # rotation center is anchor
         self._rx = self._x1
         self._ry = self._y1
-        print(self._x1, self._y1, self._a, self._b, self._rotation)
 
     def add(self, building: Building):
         """Add a building to the group,
@@ -330,7 +329,6 @@ class BuildingGroup:
                         new_y: float):
         """Move a specific corner (for scaling / rotation)"""
         am, bm = word_to_building(self, new_x, new_y)
-        print(am,bm)
         if corner_index != 0:
             scale_a = 1.
             scale_b = 1.
