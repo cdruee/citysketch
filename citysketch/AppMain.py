@@ -33,6 +33,8 @@ from .AppDialogs import (AboutDialog, HeightDialog,
                         BasemapDialog, GeoTiffDialog)
 from .App3dview import OPENGL_SUPPORT, Building3DViewer
 from .Building import Building, BuildingGroup
+from .ColorSettings import color_settings
+from .ColorDialogs import ColorSettingsDialog
 from .utils import SelectionMode, MapProvider, get_location_with_fallback
 from ._version import __version__, __version_tuple__
 
@@ -546,17 +548,6 @@ class MapCanvas(wx.Panel):
     BASE_TILE_SIZE = 256
     BASE_GEO_ZOOM = 16
 
-    COL_TILE_EMPTY = wx.Colour(200, 200, 200)
-    COL_TILE_EDGE = wx.Colour(240, 240, 240)
-    COL_GRID = wx.Colour(220, 220, 220)
-    COL_BLDG_IN = wx.Colour(200, 200, 200, 180)
-    COL_BLDG_OUT = wx.Colour(100, 100, 100)
-    COL_BLDG_LBL = wx.Colour(255, 255, 255)
-    COL_SEL_BLDG_IN = wx.Colour(150, 180, 255, 180)
-    COL_SEL_BLDG_OUT = wx.Colour(0, 0, 255)
-    COL_HANDLE_IN = wx.Colour(255, 255, 255)
-    COL_HANDLE_OUT = wx.Colour(0, 0, 255)
-
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
@@ -884,8 +875,11 @@ class MapCanvas(wx.Panel):
                     bitmap = wx.Bitmap(scaled)
                     dc.DrawBitmap(bitmap, int(screen_x), int(screen_y))
                 else:
-                    dc.SetBrush(wx.Brush(self.COL_TILE_EMPTY))
-                    dc.SetPen(wx.Pen(self.COL_TILE_EDGE, 1))
+                    dc.SetBrush(wx.Brush(
+                        color_settings.get_color('COL_TILE_EMPTY')))
+                    dc.SetPen(
+                        wx.Pen(
+                            color_settings.get_color('COL_TILE_EDGE'), 1))
                     dc.DrawRectangle(int(screen_x), int(screen_y),
                                      int(tile_size), int(tile_size))
 
@@ -898,7 +892,7 @@ class MapCanvas(wx.Panel):
     def draw_grid(self, gc):
         """Draw background grid"""
         if self.map_provider == MapProvider.NONE:
-            gc.SetPen(wx.Pen(self.COL_GRID, 1))
+            gc.SetPen(wx.Pen(color_settings.get_color('COL_GRID'), 1))
         else:
             gc.SetPen(wx.Pen(wx.Colour(100, 100, 100, 50), 1))
 
@@ -928,11 +922,11 @@ class MapCanvas(wx.Panel):
 
         # Set colors based on selection
         if building in self.selected_buildings:
-            fill_color = self.COL_SEL_BLDG_IN
-            border_color = self.COL_SEL_BLDG_OUT
+            fill_color = color_settings.get_color('COL_SEL_BLDG_IN')
+            border_color = color_settings.get_color('COL_SEL_BLDG_OUT')
         else:
-            fill_color = self.COL_BLDG_IN
-            border_color = self.COL_BLDG_OUT
+            fill_color = color_settings.get_color('COL_BLDG_IN')
+            border_color = color_settings.get_color('COL_BLDG_OUT')
 
         gc.SetBrush(wx.Brush(fill_color))
         gc.SetPen(wx.Pen(border_color, 2))
@@ -945,7 +939,7 @@ class MapCanvas(wx.Panel):
 
         gc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL),
-                   self.COL_BLDG_LBL)
+                   color_settings.get_color('COL_BLDG_LBL'))
         text = f"{building.storeys}F"
         tw, th = gc.GetTextExtent(text)
         gc.DrawText(text, scx - tw / 2, scy - th / 2)
@@ -964,7 +958,7 @@ class MapCanvas(wx.Panel):
         path.CloseSubpath()
 
         gc.SetBrush(wx.NullBrush)
-        gc.SetPen(wx.Pen(self.COL_SEL_BLDG_OUT, 1, wx.PENSTYLE_DOT))
+        gc.SetPen(wx.Pen(color_settings.get_color('COL_SEL_BLDG_OUT'), 1, wx.PENSTYLE_DOT))
         gc.DrawPath(path)
 
     def draw_selected_handles(self, gc):
@@ -978,13 +972,13 @@ class MapCanvas(wx.Panel):
             sx, sy = self.world_to_screen(cx, cy)
 
             if i == 0:
-                # Filled circle for rotation center
-                gc.SetBrush(wx.Brush(self.COL_HANDLE_OUT))
+                gc.SetBrush(
+                    wx.Brush(color_settings.get_color('COL_HANDLE_OUT')))
             else:
-                # Open circle for other corners
-                gc.SetBrush(wx.Brush(self.COL_HANDLE_IN))
-            # outline pen
-            gc.SetPen(wx.Pen(self.COL_HANDLE_OUT, 2))
+                gc.SetBrush(
+                    wx.Brush(color_settings.get_color('COL_HANDLE_IN')))
+            gc.SetPen(
+                wx.Pen(color_settings.get_color('COL_HANDLE_OUT'), 2))
             if ctrl_pressed:
                 # Draw circles in rotation mode
                 gc.DrawEllipse(sx - 5, sy - 5, 10, 10)
@@ -1525,11 +1519,18 @@ class MainFrame(wx.Frame):
         edit_menu = wx.Menu()
         basemap_item = edit_menu.Append(wx.ID_ANY, "Select &Basemap",
                                         "Choose a basemap")
+
+        # Add color settings menu item
+        edit_menu.AppendSeparator()
+        color_settings_item = edit_menu.Append(wx.ID_ANY,
+                                               "&Color Settings...",
+                                               "Configure application colors")
+
         if GEOTIFF_SUPPORT:
             edit_menu.AppendSeparator()
-            geotiff_item = (file_menu.Append(wx.ID_ANY,
-                                             "Load &GeoTIFF...",
-                                             "Load a GeoTIFF overlay"))
+            geotiff_item = file_menu.Append(wx.ID_ANY,
+                                            "Load &GeoTIFF...",
+                                            "Load a GeoTIFF overlay")
             geotiff_set_item = edit_menu.Append(wx.ID_ANY,
                                                 "GeoTIFF &Settings",
                                                 "Configure GeoTIFF overlay")
@@ -1545,6 +1546,13 @@ class MainFrame(wx.Frame):
         storey_item = edit_menu.Append(wx.ID_ANY,
                                        "Set Storey &Height",
                                        "Set the height per storey")
+
+        # Add color settings menu item
+        edit_menu.AppendSeparator()
+        color_settings_item = edit_menu.Append(wx.ID_ANY,
+                                               "&Color Settings...",
+                                               "Configure application colors")
+
 
         # Help menu
         help_menu = wx.Menu()
@@ -1565,6 +1573,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_save_as, id=wx.ID_SAVEAS)
         self.Bind(wx.EVT_MENU, self.on_exit, id=wx.ID_EXIT)
         self.Bind(wx.EVT_MENU, self.on_about, id=wx.ID_ABOUT)
+        self.Bind(wx.EVT_MENU, self.on_color_settings,
+                  id=color_settings_item.GetId())
         # optionals
         if GEOTIFF_SUPPORT:
             self.Bind(wx.EVT_MENU, self.on_load_geotiff,
@@ -1809,6 +1819,15 @@ class MainFrame(wx.Frame):
                 wx.MessageBox("Invalid number", "Invalid Input",
                               wx.OK | wx.ICON_ERROR)
         dialog.Destroy()
+
+    def on_color_settings(self, event):
+        """Open color settings dialog"""
+        dialog = ColorSettingsDialog(self, color_settings)
+        dialog.ShowModal()
+        dialog.Destroy()
+
+        # Refresh the canvas to show color changes
+        self.canvas.Refresh()
 
     def on_new(self, event):
         """Create a new project"""

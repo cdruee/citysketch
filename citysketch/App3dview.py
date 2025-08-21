@@ -16,14 +16,12 @@ except ImportError:
     print("Warning: OpenGL support not available. "
           "Install PyOpenGL for 3D view.")
 
+from .ColorSettings import color_settings
 
 # =========================================================================
 
 class Building3DViewer(wx.Dialog):
     """3D viewer for buildings using OpenGL"""
-
-    COL_SEL_BLDG_IN = wx.Colour(150, 180, 255, 180)
-    COL_BLDG_IN = wx.Colour(200, 200, 200, 180)
 
     def __init__(self, parent, buildings, selected_buildings):
         super().__init__(parent, title="3D Building View",
@@ -434,11 +432,13 @@ class Building3DViewer(wx.Dialog):
         glEnd()
 
     def draw_building_solid(self, building):
-        return self.draw_building(building, color=self.COL_SEL_BLDG_IN, solid=1.2)
+        return self.draw_building(
+            building, color=color_settings.get_color('COL_SEL_BLDG_IN'))
 
     def draw_building_transparent(self, building):
-        """Draw a building as a very transparent wireframe"""
-        return self.draw_building(building, color=self.COL_BLDG_IN, solid=0.25)
+        return self.draw_building(
+            building, color=color_settings.get_color('COL_BLDG_IN'),
+            solid=0.25)
 
     def on_mouse_down(self, event):
         """Handle mouse down for rotation"""
