@@ -34,7 +34,13 @@ from .AppDialogs import (AboutDialog, HeightDialog,
 from .App3dview import OPENGL_SUPPORT, Building3DViewer
 from .Building import Building, BuildingGroup
 from .utils import SelectionMode, MapProvider, get_location_with_fallback
-from ._version import __version__ as APP_VERSION
+from ._version import __version__, __version_tuple__
+
+APP_NAME = "CitySketch"
+APP_VERSION = __version__
+APP_MINOR = '.'.join(str(x) for x in __version_tuple__[0:2])
+
+print(f"Starting {APP_NAME} {APP_MINOR} (v{APP_VERSION})")
 
 # =========================================================================
 
@@ -464,8 +470,7 @@ class GeoTiffLayer:
                             if processed_pixels % 50000 == 0:
                                 print(f"Processed {processed_pixels}/"
                                       f"{total_pixels} pixels "
-                                      f"({100 * processed_pixels / 
-                                          total_pixels:.1f}%)")
+                                      f"({100 * processed_pixels / total_pixels:.1f}%)")
 
                         manual_nonzero = np.count_nonzero(reprojected)
                         print(f"Manual transformation produced "
@@ -709,7 +714,7 @@ class MapCanvas(wx.Panel):
                 url = self.get_tile_url(provider, z, x, y)
                 if url:
                     req = urllib.request.Request(url, headers={
-                        'User-Agent': 'CitySketch/1.0'
+                        'User-Agent': f'{APP_NAME}/{APP_MINOR}'
                     })
                     with urllib.request.urlopen(req,
                                                 timeout=5) as response:
@@ -1482,7 +1487,7 @@ class MainFrame(wx.Frame):
     """Main application frame"""
 
     def __init__(self):
-        super().__init__(None, title=f"CitySketch {APP_VERSION}",
+        super().__init__(None, title=f"{APP_NAME} {APP_VERSION}",
                          size=(1200, 800))
 
         self.current_file = None
@@ -1822,7 +1827,7 @@ class MainFrame(wx.Frame):
         self.canvas.Refresh()
         self.current_file = None
         self.modified = False
-        self.SetTitle("CitySketch - New Project")
+        self.SetTitle(f"{APP_NAME} - New Project")
         self.SetStatusText("New project created")
 
     def on_open(self, event):
@@ -1962,7 +1967,7 @@ class MainFrame(wx.Frame):
 
             self.current_file = filepath
             self.modified = False
-            self.SetTitle(f"CitySketch - {filepath}")
+            self.SetTitle(f"{APP_NAME} - {filepath}")
             self.canvas.zoom_to_buildings()
             self.SetStatusText(
                 f"Loaded {len(self.canvas.buildings)} buildings")
@@ -2051,7 +2056,7 @@ class MainFrame(wx.Frame):
 
             self.current_file = filepath
             self.modified = False
-            self.SetTitle(f"CitySketch - {filepath}")
+            self.SetTitle(f"{APP_NAME} - {filepath}")
             self.SetStatusText(
                 f"Saved {len(self.canvas.buildings)} buildings to {filepath}")
 
