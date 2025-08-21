@@ -31,6 +31,7 @@ except ImportError:
 
 from .AppDialogs import (AboutDialog, HeightDialog,
                         BasemapDialog, GeoTiffDialog)
+from .App3dview import OPENGL_SUPPORT, Building3DViewer
 from .Building import Building, BuildingGroup
 from .utils import SelectionMode, MapProvider, get_location_with_fallback
 from ._version import __version__ as APP_VERSION
@@ -1506,9 +1507,6 @@ class MainFrame(wx.Frame):
         file_menu.Append(wx.ID_NEW, "&New\tCtrl+N", "Create a new project")
         file_menu.Append(wx.ID_OPEN, "&Open\tCtrl+O",
                          "Open a CityJSON file")
-        geotiff_item = (
-            file_menu.Append(wx.ID_ANY, "Load &GeoTIFF...",
-                                       "Load a GeoTIFF overlay"))
         file_menu.Append(wx.ID_SAVE, "&Save\tCtrl+S",
                          "Save the current project")
         file_menu.Append(wx.ID_SAVEAS, "Save &As...\tCtrl+Shift+S",
@@ -1523,17 +1521,30 @@ class MainFrame(wx.Frame):
                                         "Choose a basemap")
         if GEOTIFF_SUPPORT:
             edit_menu.AppendSeparator()
-            geotiff_settings_item = edit_menu.Append(wx.ID_ANY, "GeoTIFF &Settings",
-                                                   "Configure GeoTIFF overlay")
+            geotiff_item = (file_menu.Append(wx.ID_ANY,
+                                             "Load &GeoTIFF...",
+                                             "Load a GeoTIFF overlay"))
+            geotiff_set_item = edit_menu.Append(wx.ID_ANY,
+                                                "GeoTIFF &Settings",
+                                                "Configure GeoTIFF overlay")
+        if OPENGL_SUPPORT:
+            edit_menu.AppendSeparator()
+            view_3d_item = edit_menu.Append(wx.ID_ANY,
+                                            "Show &3D View\tF3",
+                                            "Show buildings in 3D view")
+        edit_menu.AppendSeparator()
         zoom_item = edit_menu.Append(wx.ID_ANY,
                                      "&Zoom to Buildings\tCtrl+0",
                                      "Zoom to fit all buildings")
-        storey_item = edit_menu.Append(wx.ID_ANY, "Set Storey &Height",
+        storey_item = edit_menu.Append(wx.ID_ANY,
+                                       "Set Storey &Height",
                                        "Set the height per storey")
 
         # Help menu
         help_menu = wx.Menu()
-        help_menu.Append(wx.ID_ABOUT, "&About", "About this application")
+        help_menu.Append(wx.ID_ABOUT,
+                         "&About",
+                         "About this application")
 
         menubar.Append(file_menu, "&File")
         menubar.Append(edit_menu, "&Edit")
@@ -1548,7 +1559,10 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_save_as, id=wx.ID_SAVEAS)
         self.Bind(wx.EVT_MENU, self.on_exit, id=wx.ID_EXIT)
         self.Bind(wx.EVT_MENU, self.on_about, id=wx.ID_ABOUT)
-        self.Bind(wx.EVT_MENU, self.on_load_geotiff, id=geotiff_item.GetId())
+        # optionals
+        if GEOTIFF_SUPPORT:
+            self.Bind(wx.EVT_MENU, self.on_load_geotiff,
+                      id=geotiff_item.GetId())
 
         # Bind edit menu events
         self.Bind(wx.EVT_MENU, self.on_select_basemap,
@@ -1557,9 +1571,13 @@ class MainFrame(wx.Frame):
                   id=zoom_item.GetId())
         self.Bind(wx.EVT_MENU, self.on_set_storey_height,
                   id=storey_item.GetId())
+        # optionals
         if GEOTIFF_SUPPORT:
             self.Bind(wx.EVT_MENU, self.on_geotiff_settings,
-                      id=geotiff_settings_item.GetId())
+                      id=geotiff_set_item.GetId())
+        if OPENGL_SUPPORT:
+            self.Bind(wx.EVT_MENU, self.on_show_3d_view,
+                      id=view_3d_item.GetId())
 
     def create_toolbar(self):
         """Create the toolbar"""
@@ -1635,8 +1653,26 @@ class MainFrame(wx.Frame):
             self.canvas.set_building_stories(stories)
             self.SetStatusText(
                 f"Set selected buildings to {stories} stories")
+        # zoom conrol
+        elif event.ControlDown() and key in [ord('0'), wx.WXK_NUMPAD0]:
+            # Check for Ctrl+0
+            self.on_zoom_to_buildings(None)
+        elif event.ControlDown() and key in [ord('+'), wx.WXK_NUMPAD_ADD]:
+            # Handle either Ctrl++
+            self.on_zoom_in(None)
+        elif event.ControlDown() and key in [ord('-'), wx.WXK_NUMPAD_SUBTRACT]:
+            # Handle either Ctrl+-
+            self.on_zoom_out(None)
+        # file control
+        elif key == wx.WXK_CONTROL_O:
+            self.on_open(None)
+        elif key == wx.WXK_CONTROL_S:
+            self.on_save()
+
         elif key == wx.WXK_DELETE:
             self.on_delete(None)
+        elif key == wx.WXK_F3:
+            self.on_show_3d_view(None)
         else:
             event.Skip()
 
@@ -1808,6 +1844,26 @@ class MainFrame(wx.Frame):
             self.save_cityjson(self.current_file)
         else:
             self.on_save_as(event)
+
+    def on_show_3d_view(self, event):
+        """Show 3D view of buildings"""
+        if not OPENGL_SUPPORT:
+            wx.MessageBox("3D view requires OpenGL support.\n\n"
+                         "Please install PyOpenGL:\n"
+                         "pip install PyOpenGL PyOpenGL_accelerate",
+                         "OpenGL Missing",
+                         wx.OK | wx.ICON_WARNING)
+            return
+
+        if not self.canvas.buildings:
+            wx.MessageBox("No buildings to display in 3D view.", "No Buildings",
+                         wx.OK | wx.ICON_INFORMATION)
+            return
+
+        # Create and show 3D viewer
+        viewer = Building3DViewer(self, self.canvas.buildings, self.canvas.selected_buildings)
+        viewer.ShowModal()
+        viewer.Destroy()
 
     def on_save_as(self, event):
         """Save with a new filename"""
