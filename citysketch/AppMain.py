@@ -1,6 +1,6 @@
 # !/usr/bin/env python3
 """
-CityJSON Creator Application
+CitySketch Application
 A wxPython GUI application for creating and editing CityJSON files with building data.
 """
 
@@ -709,7 +709,7 @@ class MapCanvas(wx.Panel):
                 url = self.get_tile_url(provider, z, x, y)
                 if url:
                     req = urllib.request.Request(url, headers={
-                        'User-Agent': 'CityJSON Creator/1.0'
+                        'User-Agent': 'CitySketch/1.0'
                     })
                     with urllib.request.urlopen(req,
                                                 timeout=5) as response:
@@ -1482,7 +1482,8 @@ class MainFrame(wx.Frame):
     """Main application frame"""
 
     def __init__(self):
-        super().__init__(None, title="CityJSON Creator", size=(1200, 800))
+        super().__init__(None, title=f"CitySketch {APP_VERSION}",
+                         size=(1200, 800))
 
         self.current_file = None
         self.modified = False
@@ -1821,7 +1822,7 @@ class MainFrame(wx.Frame):
         self.canvas.Refresh()
         self.current_file = None
         self.modified = False
-        self.SetTitle("CityJSON Creator - New Project")
+        self.SetTitle("CitySketch - New Project")
         self.SetStatusText("New project created")
 
     def on_open(self, event):
@@ -1961,7 +1962,7 @@ class MainFrame(wx.Frame):
 
             self.current_file = filepath
             self.modified = False
-            self.SetTitle(f"CityJSON Creator - {filepath}")
+            self.SetTitle(f"CitySketch - {filepath}")
             self.canvas.zoom_to_buildings()
             self.SetStatusText(
                 f"Loaded {len(self.canvas.buildings)} buildings")
@@ -2050,7 +2051,7 @@ class MainFrame(wx.Frame):
 
             self.current_file = filepath
             self.modified = False
-            self.SetTitle(f"CityJSON Creator - {filepath}")
+            self.SetTitle(f"CitySketch - {filepath}")
             self.SetStatusText(
                 f"Saved {len(self.canvas.buildings)} buildings to {filepath}")
 

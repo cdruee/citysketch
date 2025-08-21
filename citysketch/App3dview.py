@@ -1,20 +1,29 @@
 import math
+from turtle import color
+from typing import Tuple, Optional
+
 import wx
 import wx.glcanvas
+
 try:
     from OpenGL.GL import *
     from OpenGL.GLU import *
     import numpy as np
+
     OPENGL_SUPPORT = True
 except ImportError:
     OPENGL_SUPPORT = False
     print("Warning: OpenGL support not available. "
           "Install PyOpenGL for 3D view.")
 
+
 # =========================================================================
 
 class Building3DViewer(wx.Dialog):
     """3D viewer for buildings using OpenGL"""
+
+    COL_SEL_BLDG_IN = wx.Colour(150, 180, 255, 180)
+    COL_BLDG_IN = wx.Colour(200, 200, 200, 180)
 
     def __init__(self, parent, buildings, selected_buildings):
         super().__init__(parent, title="3D Building View",
@@ -56,11 +65,17 @@ class Building3DViewer(wx.Dialog):
         self.last_mouse_pos = None
         self.rotating = False
 
+        # OpenGL initialization flag - ADD THIS
+        self.opengl_initialized = False
+        self.context = None
+
         self.create_ui()
-        self.setup_opengl()
 
         # Center on parent
         self.CenterOnParent()
+
+        # Initialize OpenGL after showing the dialog - ADD THIS
+        wx.CallAfter(self.delayed_opengl_setup)
 
     def calculate_center(self):
         """Calculate the center point of buildings to display"""
@@ -113,9 +128,14 @@ class Building3DViewer(wx.Dialog):
                       wx.glcanvas.WX_GL_DOUBLEBUFFER,
                       wx.glcanvas.WX_GL_DEPTH_SIZE, 16]
 
-        self.canvas = wx.glcanvas.GLCanvas(panel,
-                                           attribList=attribList)
-        self.context = wx.glcanvas.GLContext(self.canvas)
+        try:
+            self.canvas = wx.glcanvas.GLCanvas(panel,
+                                               attribList=attribList)
+        except Exception as e:
+            wx.MessageBox(f"Failed to create OpenGL canvas: {str(e)}",
+                          "OpenGL Error", wx.OK | wx.ICON_ERROR)
+            self.EndModal(wx.ID_CANCEL)
+            return
 
         sizer.Add(self.canvas, 1, wx.EXPAND | wx.ALL, 5)
 
@@ -154,8 +174,26 @@ class Building3DViewer(wx.Dialog):
         self.canvas.Bind(wx.EVT_MOUSEWHEEL, self.on_mouse_wheel)
         self.Bind(wx.EVT_CHAR_HOOK, self.on_key_down)
 
+    def delayed_opengl_setup(self):
+        """Initialize OpenGL after the window is shown - ADD THIS METHOD"""
+        try:
+            # Create OpenGL context
+            self.context = wx.glcanvas.GLContext(self.canvas)
+            self.setup_opengl()
+            self.opengl_initialized = True
+
+            # Force a refresh to draw the scene
+            self.Refresh()
+
+        except Exception as e:
+            wx.MessageBox(f"Failed to initialize OpenGL: {str(e)}",
+                          "OpenGL Error", wx.OK | wx.ICON_ERROR)
+
     def setup_opengl(self):
         """Initialize OpenGL settings"""
+        if not self.context:
+            return
+
         self.canvas.SetCurrent(self.context)
 
         # Enable depth testing
@@ -173,25 +211,37 @@ class Building3DViewer(wx.Dialog):
         glEnable(GL_POLYGON_OFFSET_FILL)
         glPolygonOffset(1.0, 1.0)
 
+        # Setup initial projection
+        self.setup_projection()
+
     def on_paint(self, event):
         """Handle paint events"""
-        if not OPENGL_SUPPORT:
+        if not OPENGL_SUPPORT or not self.opengl_initialized:
             return
 
-        self.canvas.SetCurrent(self.context)
-        self.render()
-        self.canvas.SwapBuffers()
+        try:
+            self.canvas.SetCurrent(self.context)
+            self.render()
+            self.canvas.SwapBuffers()
+        except Exception as e:
+            print(f"Error in on_paint: {e}")
 
     def on_size(self, event):
         """Handle resize events"""
-        if not OPENGL_SUPPORT:
+        if not OPENGL_SUPPORT or not self.opengl_initialized:
+            event.Skip()
             return
 
-        self.canvas.SetCurrent(self.context)
-        size = self.canvas.GetSize()
-        glViewport(0, 0, size.width, size.height)
-        self.setup_projection()
-        self.Refresh()
+        try:
+            self.canvas.SetCurrent(self.context)
+            size = self.canvas.GetSize()
+            glViewport(0, 0, size.width, size.height)
+            self.setup_projection()
+            self.Refresh()
+        except Exception as e:
+            print(f"Error in on_size: {e}")
+
+        event.Skip()
 
     def setup_projection(self):
         """Set up the projection matrix"""
@@ -207,35 +257,42 @@ class Building3DViewer(wx.Dialog):
 
     def render(self):
         """Render the 3D scene"""
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        if not self.opengl_initialized:
+            return
 
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
+        try:
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        # Set up camera
-        camera_x = self.center_x + self.camera_distance * math.cos(
-            math.radians(self.camera_elevation)) * math.cos(
-            math.radians(self.camera_azimuth))
-        camera_y = self.center_y + self.camera_distance * math.cos(
-            math.radians(self.camera_elevation)) * math.sin(
-            math.radians(self.camera_azimuth))
-        camera_z = self.camera_distance * math.sin(
-            math.radians(self.camera_elevation))
+            glMatrixMode(GL_MODELVIEW)
+            glLoadIdentity()
 
-        gluLookAt(camera_x, camera_y, camera_z,  # Camera position
-                  self.center_x, self.center_y, 0,  # Look at point
-                  0, 0, 1)  # Up vector
+            # Set up camera
+            camera_x = self.center_x + self.camera_distance * math.cos(
+                math.radians(self.camera_elevation)) * math.cos(
+                math.radians(self.camera_azimuth))
+            camera_y = self.center_y + self.camera_distance * math.cos(
+                math.radians(self.camera_elevation)) * math.sin(
+                math.radians(self.camera_azimuth))
+            camera_z = self.camera_distance * math.sin(
+                math.radians(self.camera_elevation))
 
-        # Draw ground plane
-        self.draw_ground_plane()
+            gluLookAt(camera_x, camera_y, camera_z,  # Camera position
+                      self.center_x, self.center_y, 0,  # Look at point
+                      0, 0, 1)  # Up vector
 
-        # Draw wireframe buildings (non-selected)
-        for building in self.wireframe_buildings:
-            self.draw_building_wireframe(building)
+            # Draw ground plane
+            self.draw_ground_plane()
 
-        # Draw solid buildings (selected)
-        for building in self.display_buildings:
-            self.draw_building_solid(building)
+            # Draw wireframe buildings (non-selected)
+            for building in self.wireframe_buildings:
+                self.draw_building_transparent(building)
+
+            # Draw solid buildings (selected)
+            for building in self.display_buildings:
+                self.draw_building_solid(building)
+
+        except Exception as e:
+            print(f"Error in render: {e}")
 
     def draw_ground_plane(self):
         """Draw a simple ground plane"""
@@ -284,13 +341,48 @@ class Building3DViewer(wx.Dialog):
 
         glEnd()
 
-    def draw_building_solid(self, building):
+    def draw_building(self, building,
+                      color: Optional[int|float|Tuple|wx.Colour] = None,
+                      solid: Optional[float|bool] = None):
         """Draw a building as a solid with transparency"""
         corners = building.get_corners()
         height = building.height
 
+        if solid is not None:
+            solid = 0.7
+        elif isinstance(solid, bool):
+            solid = 1. if solid is True else 0.
+        else:
+            solid = 1.
+
+        if isinstance(color, int):
+            color = float(color) / 255.
+        if isinstance(color, float):
+            if color < 0.:
+                rgb = (0.,) * 3
+            elif color <= 1.:
+                rgb = (color,) * 3
+            else:
+                rgb = (1.,) * 3
+            alpha = solid
+        elif isinstance(color, wx.Colour):
+            rgb = (color.GetRed()/255.,
+                   color.GetGreen()/255.,
+                   color.GetBlue()/255.)
+            alpha = color.GetAlpha()/255. * solid
+        elif isinstance(color, tuple) and len(color) == 3:
+                rgb = color
+                alpha = solid
+        elif isinstance(color, tuple) and len(color) == 4:
+                rgb = color[0:3]
+                alpha = color[3] * solid
+        else:
+            print(f"illegal color tuple {str(color)}")
+            rgb = (0.5,) * 3
+            alpha = 1.
+
         # Use semi-transparent blue for selected buildings (matching map colors)
-        glColor4f(150/255.0, 180/255.0, 1.0, 0.7)  # Semi-transparent blue
+        glColor4f(*rgb, alpha)  # Semi-transparent blue
 
         # Draw building faces
         glBegin(GL_QUADS)
@@ -319,7 +411,7 @@ class Building3DViewer(wx.Dialog):
         glEnd()
 
         # Draw edges for better definition
-        glColor4f(0, 0, 1.0, 0.8)  # Solid blue edges
+        glColor4f(*rgb, max(1., alpha * 1.15))  # Solid blue edges
         glBegin(GL_LINES)
 
         # Bottom edges
@@ -341,33 +433,12 @@ class Building3DViewer(wx.Dialog):
 
         glEnd()
 
-    def draw_building_wireframe(self, building):
+    def draw_building_solid(self, building):
+        return self.draw_building(building, color=self.COL_SEL_BLDG_IN, solid=1.2)
+
+    def draw_building_transparent(self, building):
         """Draw a building as a very transparent wireframe"""
-        corners = building.get_corners()
-        height = building.height
-
-        # Very transparent gray wireframe
-        glColor4f(0.5, 0.5, 0.5, 0.2)
-        glBegin(GL_LINES)
-
-        # Bottom edges
-        for i in range(4):
-            j = (i + 1) % 4
-            glVertex3f(corners[i][0], corners[i][1], 0)
-            glVertex3f(corners[j][0], corners[j][1], 0)
-
-        # Top edges
-        for i in range(4):
-            j = (i + 1) % 4
-            glVertex3f(corners[i][0], corners[i][1], height)
-            glVertex3f(corners[j][0], corners[j][1], height)
-
-        # Vertical edges
-        for i in range(4):
-            glVertex3f(corners[i][0], corners[i][1], 0)
-            glVertex3f(corners[i][0], corners[i][1], height)
-
-        glEnd()
+        return self.draw_building(building, color=self.COL_BLDG_IN, solid=0.25)
 
     def on_mouse_down(self, event):
         """Handle mouse down for rotation"""
