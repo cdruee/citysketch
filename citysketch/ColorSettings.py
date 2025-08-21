@@ -33,6 +33,18 @@ class ColorSettings:
             'Background grid lines'
         ),
 
+        # Building preview colors
+        'COL_FLOAT_IN': ColorDefinition(
+            'COL_FLOAT_IN',
+            (100, 255, 100, 100),
+            'Building preview fill'
+        ),
+        'COL_FLOAT_OUT': ColorDefinition(
+            'COL_FLOAT_OUT',
+            (0, 200, 0, 255),
+            'Building preview outline'
+        ),
+
         # Building colors
         'COL_BLDG_IN': ColorDefinition(
             'COL_BLDG_IN',
@@ -105,13 +117,13 @@ class ColorSettings:
             raise KeyError(f"Color '{key}' not defined")
         self._colors[key] = wx.Colour(color)
 
-    def get_color_definition(self, key: str) -> ColorDefinition:
+    def get_definition(self, key: str) -> ColorDefinition:
         """Get color definition by key"""
         if key not in self.COLOR_DEFINITIONS:
             raise KeyError(f"Color '{key}' not defined")
         return self.COLOR_DEFINITIONS[key]
 
-    def get_all_color_keys(self):
+    def get_all_keys(self):
         """Get all available color keys"""
         return list(self.COLOR_DEFINITIONS.keys())
 
@@ -130,4 +142,4 @@ class ColorSettings:
 
 
 # Global color settings instance
-color_settings = ColorSettings()
+colorset = ColorSettings()

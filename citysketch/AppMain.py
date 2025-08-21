@@ -33,7 +33,7 @@ from .AppDialogs import (AboutDialog, HeightDialog,
                         BasemapDialog, GeoTiffDialog)
 from .App3dview import OPENGL_SUPPORT, Building3DViewer
 from .Building import Building, BuildingGroup
-from .ColorSettings import color_settings
+from .ColorSettings import colorset
 from .ColorDialogs import ColorSettingsDialog
 from .utils import SelectionMode, MapProvider, get_location_with_fallback
 from ._version import __version__, __version_tuple__
@@ -876,10 +876,10 @@ class MapCanvas(wx.Panel):
                     dc.DrawBitmap(bitmap, int(screen_x), int(screen_y))
                 else:
                     dc.SetBrush(wx.Brush(
-                        color_settings.get_color('COL_TILE_EMPTY')))
+                        colorset.get_color('COL_TILE_EMPTY')))
                     dc.SetPen(
                         wx.Pen(
-                            color_settings.get_color('COL_TILE_EDGE'), 1))
+                            colorset.get_color('COL_TILE_EDGE'), 1))
                     dc.DrawRectangle(int(screen_x), int(screen_y),
                                      int(tile_size), int(tile_size))
 
@@ -892,7 +892,7 @@ class MapCanvas(wx.Panel):
     def draw_grid(self, gc):
         """Draw background grid"""
         if self.map_provider == MapProvider.NONE:
-            gc.SetPen(wx.Pen(color_settings.get_color('COL_GRID'), 1))
+            gc.SetPen(wx.Pen(colorset.get_color('COL_GRID'), 1))
         else:
             gc.SetPen(wx.Pen(wx.Colour(100, 100, 100, 50), 1))
 
@@ -922,11 +922,11 @@ class MapCanvas(wx.Panel):
 
         # Set colors based on selection
         if building in self.selected_buildings:
-            fill_color = color_settings.get_color('COL_SEL_BLDG_IN')
-            border_color = color_settings.get_color('COL_SEL_BLDG_OUT')
+            fill_color = colorset.get_color('COL_SEL_BLDG_IN')
+            border_color = colorset.get_color('COL_SEL_BLDG_OUT')
         else:
-            fill_color = color_settings.get_color('COL_BLDG_IN')
-            border_color = color_settings.get_color('COL_BLDG_OUT')
+            fill_color = colorset.get_color('COL_BLDG_IN')
+            border_color = colorset.get_color('COL_BLDG_OUT')
 
         gc.SetBrush(wx.Brush(fill_color))
         gc.SetPen(wx.Pen(border_color, 2))
@@ -939,7 +939,7 @@ class MapCanvas(wx.Panel):
 
         gc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL),
-                   color_settings.get_color('COL_BLDG_LBL'))
+                   colorset.get_color('COL_BLDG_LBL'))
         text = f"{building.storeys}F"
         tw, th = gc.GetTextExtent(text)
         gc.DrawText(text, scx - tw / 2, scy - th / 2)
@@ -958,7 +958,7 @@ class MapCanvas(wx.Panel):
         path.CloseSubpath()
 
         gc.SetBrush(wx.NullBrush)
-        gc.SetPen(wx.Pen(color_settings.get_color('COL_SEL_BLDG_OUT'), 1, wx.PENSTYLE_DOT))
+        gc.SetPen(wx.Pen(colorset.get_color('COL_SEL_BLDG_OUT'), 1, wx.PENSTYLE_DOT))
         gc.DrawPath(path)
 
     def draw_selected_handles(self, gc):
@@ -973,12 +973,12 @@ class MapCanvas(wx.Panel):
 
             if i == 0:
                 gc.SetBrush(
-                    wx.Brush(color_settings.get_color('COL_HANDLE_OUT')))
+                    wx.Brush(colorset.get_color('COL_HANDLE_OUT')))
             else:
                 gc.SetBrush(
-                    wx.Brush(color_settings.get_color('COL_HANDLE_IN')))
+                    wx.Brush(colorset.get_color('COL_HANDLE_IN')))
             gc.SetPen(
-                wx.Pen(color_settings.get_color('COL_HANDLE_OUT'), 2))
+                wx.Pen(colorset.get_color('COL_HANDLE_OUT'), 2))
             if ctrl_pressed:
                 # Draw circles in rotation mode
                 gc.DrawEllipse(sx - 5, sy - 5, 10, 10)
@@ -1035,8 +1035,9 @@ class MapCanvas(wx.Panel):
             path.AddLineToPoint(sx, sy)
         path.CloseSubpath()
 
-        gc.SetBrush(wx.Brush(wx.Colour(100, 255, 100, 100)))
-        gc.SetPen(wx.Pen(wx.Colour(0, 200, 0), 2, wx.PENSTYLE_DOT))
+        gc.SetBrush(wx.Brush(colorset.get_color('COL_FLOAT_IN')))
+        gc.SetPen(wx.Pen(colorset.get_color('COL_FLOAT_OUT'),
+                         2, wx.PENSTYLE_DOT))
         gc.DrawPath(path)
 
         self.floating_rect['a'] = new_a
@@ -1822,7 +1823,7 @@ class MainFrame(wx.Frame):
 
     def on_color_settings(self, event):
         """Open color settings dialog"""
-        dialog = ColorSettingsDialog(self, color_settings)
+        dialog = ColorSettingsDialog(self, colorset)
         dialog.ShowModal()
         dialog.Destroy()
 

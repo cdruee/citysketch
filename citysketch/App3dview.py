@@ -16,7 +16,7 @@ except ImportError:
     print("Warning: OpenGL support not available. "
           "Install PyOpenGL for 3D view.")
 
-from .ColorSettings import color_settings
+from .ColorSettings import colorset
 
 # =========================================================================
 
@@ -341,7 +341,8 @@ class Building3DViewer(wx.Dialog):
 
     def draw_building(self, building,
                       color: Optional[int|float|Tuple|wx.Colour] = None,
-                      solid: Optional[float|bool] = None):
+                      solid: Optional[float|bool] = None,
+                      faces: bool = True):
         """Draw a building as a solid with transparency"""
         corners = building.get_corners()
         height = building.height
@@ -379,37 +380,38 @@ class Building3DViewer(wx.Dialog):
             rgb = (0.5,) * 3
             alpha = 1.
 
-        # Use semi-transparent blue for selected buildings (matching map colors)
-        glColor4f(*rgb, alpha)  # Semi-transparent blue
+        if faces:
+            # Use semi-transparent blue for selected buildings (matching map colors)
+            glColor4f(*rgb, alpha)  # Semi-transparent blue
 
-        # Draw building faces
-        glBegin(GL_QUADS)
+            # Draw building faces
+            glBegin(GL_QUADS)
 
-        # Bottom face (ground)
-        glVertex3f(corners[0][0], corners[0][1], 0)
-        glVertex3f(corners[1][0], corners[1][1], 0)
-        glVertex3f(corners[2][0], corners[2][1], 0)
-        glVertex3f(corners[3][0], corners[3][1], 0)
+            # Bottom face (ground)
+            glVertex3f(corners[0][0], corners[0][1], 0)
+            glVertex3f(corners[1][0], corners[1][1], 0)
+            glVertex3f(corners[2][0], corners[2][1], 0)
+            glVertex3f(corners[3][0], corners[3][1], 0)
 
-        # Top face
-        glVertex3f(corners[0][0], corners[0][1], height)
-        glVertex3f(corners[3][0], corners[3][1], height)
-        glVertex3f(corners[2][0], corners[2][1], height)
-        glVertex3f(corners[1][0], corners[1][1], height)
+            # Top face
+            glVertex3f(corners[0][0], corners[0][1], height)
+            glVertex3f(corners[3][0], corners[3][1], height)
+            glVertex3f(corners[2][0], corners[2][1], height)
+            glVertex3f(corners[1][0], corners[1][1], height)
 
-        # Side faces
-        for i in range(4):
-            j = (i + 1) % 4
-            # Bottom to top
-            glVertex3f(corners[i][0], corners[i][1], 0)
-            glVertex3f(corners[j][0], corners[j][1], 0)
-            glVertex3f(corners[j][0], corners[j][1], height)
-            glVertex3f(corners[i][0], corners[i][1], height)
+            # Side faces
+            for i in range(4):
+                j = (i + 1) % 4
+                # Bottom to top
+                glVertex3f(corners[i][0], corners[i][1], 0)
+                glVertex3f(corners[j][0], corners[j][1], 0)
+                glVertex3f(corners[j][0], corners[j][1], height)
+                glVertex3f(corners[i][0], corners[i][1], height)
 
-        glEnd()
+            glEnd()
 
-        # Draw edges for better definition
-        glColor4f(*rgb, max(1., alpha * 1.15))  # Solid blue edges
+        # Draw edges
+        glColor4f(*rgb, max(1., alpha * 1.25))  # Solid blue edges
         glBegin(GL_LINES)
 
         # Bottom edges
@@ -433,12 +435,15 @@ class Building3DViewer(wx.Dialog):
 
     def draw_building_solid(self, building):
         return self.draw_building(
-            building, color=color_settings.get_color('COL_SEL_BLDG_IN'))
+            building, color=colorset.get_color('COL_SEL_BLDG_IN')
+        )
 
     def draw_building_transparent(self, building):
         return self.draw_building(
-            building, color=color_settings.get_color('COL_BLDG_IN'),
-            solid=0.25)
+            building, color=colorset.get_color('COL_BLDG_IN'),
+            solid=0.25,
+            faces=False
+        )
 
     def on_mouse_down(self, event):
         """Handle mouse down for rotation"""

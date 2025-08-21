@@ -408,7 +408,7 @@ class ColorSettingsDialog(wx.Dialog):
         super().__init__(parent, title="Color Settings", size=(600, 500))
 
         self.color_settings = color_settings
-        self.key_mappings = {}  # Initialize key mappings dictionary
+        self.color_buttons = []  # Initialize color buttons list
         self.create_ui()
         self.populate_colors()
         self.CenterOnParent()
@@ -437,20 +437,43 @@ class ColorSettingsDialog(wx.Dialog):
         list_box = wx.StaticBox(parent, label="Application Colors")
         list_sizer = wx.StaticBoxSizer(list_box, wx.VERTICAL)
 
-        # Create list control
-        self.color_list = wx.ListCtrl(parent,
-                                      style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
-        self.color_list.AppendColumn("Color", width=80)
-        self.color_list.AppendColumn("Name", width=150)
-        self.color_list.AppendColumn("Description", width=300)
+        # Create scrolled panel for the color list
+        self.scroll_panel = wx.ScrolledWindow(parent, style=wx.VSCROLL)
+        self.scroll_panel.SetScrollRate(0,
+                                        20)  # Only vertical scrolling, 20 pixels per step
 
-        list_sizer.Add(self.color_list, 1, wx.EXPAND | wx.ALL, 5)
+        # Create sizer for the scrolled content
+        scroll_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Create header within the scrolled panel
+        header_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        header_color = wx.StaticText(self.scroll_panel, label="Color",
+                                     size=(80, -1))
+        header_color.SetFont(header_color.GetFont().MakeBold())
+        header_desc = wx.StaticText(self.scroll_panel, label="Description",
+                                    size=(400, -1))
+        header_desc.SetFont(header_desc.GetFont().MakeBold())
+
+        header_sizer.Add(header_color, 0,
+                         wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
+        header_sizer.Add(header_desc, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL,
+                         5)
+        scroll_sizer.Add(header_sizer, 0, wx.EXPAND | wx.ALL, 5)
+
+        # Add separator line
+        line = wx.StaticLine(self.scroll_panel)
+        scroll_sizer.Add(line, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 5)
+
+        # Store references for adding color rows
+        self.color_rows_sizer = scroll_sizer
+        self.color_parent = self.scroll_panel
+
+        # Set the sizer for the scrolled panel
+        self.scroll_panel.SetSizer(scroll_sizer)
+
+        # Add scrolled panel to the main sizer
+        list_sizer.Add(self.scroll_panel, 1, wx.EXPAND | wx.ALL, 5)
         sizer.Add(list_sizer, 1, wx.EXPAND | wx.ALL, 10)
-
-        # Bind events
-        self.color_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED,
-                             self.on_color_selected)
-        self.color_list.Bind(wx.EVT_LEFT_DCLICK, self.on_color_selected)
 
     def create_buttons(self, parent, sizer):
         """Create dialog buttons"""
@@ -470,75 +493,76 @@ class ColorSettingsDialog(wx.Dialog):
 
     def populate_colors(self):
         """Populate the color list"""
-        self.color_list.DeleteAllItems()
+        # Clear existing color rows (keep header and separator)
+        if hasattr(self, 'color_buttons'):
+            for btn, label in self.color_buttons:
+                btn.Destroy()
+                label.Destroy()
 
-        # Store key mappings separately since SetItemPyData doesn't exist
-        self.key_mappings = {}
+        self.color_buttons = []
 
-        for i, key in enumerate(self.color_settings.get_all_color_keys()):
-            definition = self.color_settings.get_color_definition(key)
+        for key in self.color_settings.get_all_keys():
+            definition = self.color_settings.get_definition(key)
             color = self.color_settings.get_color(key)
 
-            # Insert item
-            index = self.color_list.InsertItem(i, "")
+            # Create horizontal sizer for this color row
+            row_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-            # Set color column - we'll use the item data to store color info
-            self.color_list.SetItem(index, 1, definition.name)
-            self.color_list.SetItem(index, 2, definition.description)
-            self.color_list.SetItemData(index, i)
+            # Create color button with border
+            color_btn = wx.Button(self.color_parent, size=(80, 30))
+            color_btn.SetBackgroundColour(color)
 
-            # Store the key mapping using the index
-            self.key_mappings[index] = key
+            # Create HTTP color code for tooltip
+            color_text = f"#{color.Red():02X}{color.Green():02X}{color.Blue():02X}"
+            if color.Alpha() < 255:
+                color_text += f"{color.Alpha():02X}"
+            color_btn.SetToolTip(color_text)
 
-        # Custom draw the color column
-        self.color_list.Bind(wx.EVT_PAINT, self.on_list_paint)
+            # Bind button click event
+            color_btn.Bind(wx.EVT_BUTTON,
+                           lambda evt, k=key: self.on_color_button_clicked(
+                               evt, k))
 
-    def on_list_paint(self, event):
-        """Custom paint the color swatches"""
-        event.Skip()
+            # Create description label
+            desc_label = wx.StaticText(self.color_parent,
+                                       label=definition.description,
+                                       size=(400, -1))
+            desc_label.SetToolTip(f"Internal name: {key}")
 
-        # Get the list control's device context
-        dc = wx.ClientDC(self.color_list)
+            # Add to row sizer
+            row_sizer.Add(color_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL,
+                          5)
+            row_sizer.Add(desc_label, 1, wx.ALL | wx.ALIGN_CENTER_VERTICAL,
+                          5)
 
-        # Draw color swatches
-        for i in range(self.color_list.GetItemCount()):
-            key = self.key_mappings.get(i)
-            if key:
-                color = self.color_settings.get_color(key)
+            # Add row to main sizer
+            self.color_rows_sizer.Add(row_sizer, 0, wx.EXPAND)
 
-                # Get item rectangle
-                rect = self.color_list.GetItemRect(i)
+            # Store button and label references
+            self.color_buttons.append((color_btn, desc_label))
 
-                # Draw color swatch in first column
-                swatch_rect = wx.Rect(rect.x + 5, rect.y + 2, 60,
-                                      rect.height - 4)
+        # Refresh layout and update scroll panel
+        self.scroll_panel.SetSizer(self.color_rows_sizer)
+        self.scroll_panel.FitInside()  # Update virtual size for scrolling
+        self.Layout()
 
-                # Draw color with border
-                dc.SetBrush(wx.Brush(color))
-                dc.SetPen(wx.Pen(wx.Colour(0, 0, 0), 1))
-                dc.DrawRectangle(swatch_rect)
+    def on_color_button_clicked(self, event, key):
+        """Handle color button click"""
+        definition = self.color_settings.get_definition(key)
+        current_color = self.color_settings.get_color(key)
 
-    def on_color_selected(self, event):
-        """Handle color selection"""
-        selection = event.GetIndex()
-        if selection >= 0:
-            key = self.key_mappings.get(selection)
-            if key:
-                definition = self.color_settings.get_color_definition(key)
-                current_color = self.color_settings.get_color(key)
+        # Open color picker dialog
+        dialog = ColorPickerDialog(self,
+                                   f"Select {definition.description}",
+                                   current_color)
+        if dialog.ShowModal() == wx.ID_OK:
+            new_color = dialog.get_color()
+            self.color_settings.set_color(key, new_color)
 
-                # Open color picker dialog
-                dialog = ColorPickerDialog(self,
-                                           f"Select {definition.name}",
-                                           current_color)
-                if dialog.ShowModal() == wx.ID_OK:
-                    new_color = dialog.get_color()
-                    self.color_settings.set_color(key, new_color)
+            # Refresh the display
+            self.populate_colors()  # Repopulate to update colors
 
-                    # Refresh the display
-                    self.color_list.Refresh()
-
-                dialog.Destroy()
+        dialog.Destroy()
 
     def on_reset_all(self, event):
         """Reset all colors to defaults"""
@@ -550,7 +574,7 @@ class ColorSettingsDialog(wx.Dialog):
 
         if result == wx.YES:
             self.color_settings.reset_to_defaults()
-            self.color_list.Refresh()
+            self.populate_colors()  # Repopulate to update colors
 
     def on_close(self, event):
         """Close the dialog"""
