@@ -26,7 +26,8 @@ try:
     GEOTIFF_SUPPORT = True
 except ImportError:
     GEOTIFF_SUPPORT = False
-    print("Warning: GeoTIFF support not available. Install rasterio for full functionality.")
+    print("Warning: GeoTIFF support not available. "
+          "Install rasterio for full functionality.")
 
 from .AppDialogs import (AboutDialog, HeightDialog,
                         BasemapDialog, GeoTiffDialog)
@@ -123,14 +124,31 @@ class GeoTiffLayer:
     def load_file(self, filepath):
         """Load a GeoTIFF file"""
         if not GEOTIFF_SUPPORT:
-            raise RuntimeError(
-                "GeoTIFF support not available. Please install gdal and rasterio.")
+            raise RuntimeError("GeoTIFF support not available. "
+                               "Please install gdal and rasterio.")
 
         try:
             with rasterio.open(filepath) as src:
                 print(f"Loading GeoTIFF: {filepath}")
-                print(
-                    f"Shape: {src.shape}, Bands: {src.count}, CRS: {src.crs}")
+
+                epsg = src.crs.to_epsg()
+
+                if epsg != 4326:
+                    result = wx.MessageBox(
+                        f"The loaded image is not projected "
+                        f"to EPSG:4326 (WGS84), but to EPSG:{epsg}. "
+                        f"This will result in a very slow display. "
+                        f"Are you sure you want to use it?",
+                        "Confirm Delete",
+                        wx.YES_NO | wx.ICON_QUESTION
+                    )
+
+                    if result == wx.NO:
+                        self.data = None
+                        return False
+
+                print(f"Shape: {src.shape}, "
+                      f"Bands: {src.count}, CRS: {src.crs}")
                 print(f"Data type: {src.dtypes}, Bounds: {src.bounds}")
 
                 # Read the data with better handling
@@ -146,22 +164,15 @@ class GeoTiffLayer:
                     band = src.read(1)
                     self.data = np.stack([band, band, band], axis=0)
 
-                print(f"Data shape after reading: {self.data.shape}")
-                print(
-                    f"Data type: {self.data.dtype}, Min: {np.min(self.data)}, Max: {np.max(self.data)}")
-                print(f"Affine Transformation: {src.transform}")
-                # print(f" ... rotation {src.transform.rotation_angle}")
-
                 self.transform = src.transform
                 self.crs = src.crs
 
                 # Get bounds in WGS84
-                if self.crs and self.crs.to_epsg() != 4326:
+                if self.crs and epsg != 4326:
                     self.bounds = transform_bounds(src.crs, 'EPSG:4326',
                                                    *src.bounds)
                 else:
                     self.bounds = src.bounds
-
                 print(f"Bounds in WGS84: {self.bounds}")
 
                 self.filepath = filepath
@@ -204,9 +215,6 @@ class GeoTiffLayer:
                         self.data = np.full_like(self.data, 128,
                                                  dtype=np.uint8)
 
-                print(
-                    f"Final data type: {self.data.dtype}, Min: {np.min(self.data)}, Max: {np.max(self.data)}")
-
                 # Handle NoData values
                 if hasattr(src, 'nodata') and src.nodata is not None:
                     nodata_mask = self.data == src.nodata
@@ -240,7 +248,8 @@ class GeoTiffLayer:
 
             # Check if we need reprojection at all
             if self.crs and self.crs.to_epsg() == 4326:
-                print("Source is already WGS84, using direct transformation")
+                print("Source is already WGS84, "
+                      "using direct transformation")
                 # Direct pixel mapping without CRS transformation
                 src_bounds = self.bounds
 
@@ -266,8 +275,8 @@ class GeoTiffLayer:
                 src_y_min = max(0, min(self.data.shape[1] - 1, src_y_min))
                 src_y_max = max(0, min(self.data.shape[1], src_y_max))
 
-                print(
-                    f"Source pixel bounds: x({src_x_min}:{src_x_max}), y({src_y_min}:{src_y_max})")
+                print(f"Source pixel bounds: x({src_x_min}:{src_x_max}), "
+                      f"y({src_y_min}:{src_y_max})")
 
                 if src_x_max > src_x_min and src_y_max > src_y_min:
                     # Extract the relevant portion
@@ -291,7 +300,7 @@ class GeoTiffLayer:
                 # Use rasterio reprojection for different CRS
                 print("Using rasterio reprojection for non-WGS84 data")
 
-                # Try rasterio first (but we know it fails for EPSG:5677)
+                # Try rasterio first (if future Version works)
                 try:
                     for i in range(3):
                         reprojected[i], _ = reproject(
@@ -335,11 +344,18 @@ class GeoTiffLayer:
                         )
 
                         # Transform pixel coordinates to source CRS coordinates using the affine transform
-                        src_x_coords = self.transform.c + self.transform.a * px_coords + self.transform.b * py_coords
-                        src_y_coords = self.transform.f + self.transform.d * px_coords + self.transform.e * py_coords
+                        src_x_coords = (self.transform.c +
+                                        self.transform.a * px_coords +
+                                        self.transform.b * py_coords)
+                        src_y_coords = (self.transform.f +
+                                        self.transform.d * px_coords +
+                                        self.transform.e * py_coords)
 
-                        print(
-                            f"Source coordinate ranges: X({np.min(src_x_coords):.2f} to {np.max(src_x_coords):.2f}), Y({np.min(src_y_coords):.2f} to {np.max(src_y_coords):.2f})")
+                        print(f"Source coordinate ranges: "
+                              f"X({np.min(src_x_coords):.2f} "
+                              f"to {np.max(src_x_coords):.2f}), "
+                              f"Y({np.min(src_y_coords):.2f} "
+                              f"to {np.max(src_y_coords):.2f})")
 
                         # Transform to WGS84 in chunks to manage memory
                         chunk_size = 10000  # Process 10k points at a time
@@ -363,9 +379,11 @@ class GeoTiffLayer:
                             chunk_y = src_y_flat[start_idx:end_idx]
 
                             try:
-                                wgs84_x_chunk, wgs84_y_chunk = warp_transform(
-                                    self.crs, 'EPSG:4326', chunk_x, chunk_y
-                                )
+                                wgs84_x_chunk, wgs84_y_chunk = \
+                                    warp_transform(
+                                        self.crs, 'EPSG:4326',
+                                        chunk_x, chunk_y
+                                    )
 
                                 # Filter points within target bounds
                                 mask = ((np.array(wgs84_x_chunk) >=
@@ -436,24 +454,27 @@ class GeoTiffLayer:
                                                 src_values[nonzero_mask]
 
                             except Exception as chunk_error:
-                                print(
-                                    f"Error processing chunk {start_idx}-{end_idx}: {chunk_error}")
+                                print(f"Error processing chunk "
+                                      f"{start_idx}-{end_idx}: "
+                                      f"{chunk_error}")
                                 continue
 
                             processed_pixels += (end_idx - start_idx)
                             if processed_pixels % 50000 == 0:
-                                print(
-                                    f"Processed {processed_pixels}/{total_pixels} pixels ({100 * processed_pixels / total_pixels:.1f}%)")
+                                print(f"Processed {processed_pixels}/"
+                                      f"{total_pixels} pixels "
+                                      f"({100 * processed_pixels / 
+                                          total_pixels:.1f}%)")
 
                         manual_nonzero = np.count_nonzero(reprojected)
-                        print(
-                            f"Manual transformation produced {manual_nonzero} non-zero pixels")
+                        print(f"Manual transformation produced "
+                              f"{manual_nonzero} non-zero pixels")
 
                         # If still very sparse, try nearest neighbor interpolation
                         if manual_nonzero < target_size[0] * target_size[
                             1] * 0.01:  # Less than 1% coverage
-                            print(
-                                "Applying nearest neighbor interpolation to fill gaps...")
+                            print("Applying nearest neighbor "
+                                  "interpolation to fill gaps...")
 
                             from scipy.ndimage import binary_dilation
 
@@ -474,12 +495,12 @@ class GeoTiffLayer:
                                     reprojected[i] = dilated_data
 
                             final_nonzero = np.count_nonzero(reprojected)
-                            print(
-                                f"After interpolation: {final_nonzero} non-zero pixels")
+                            print(f"After interpolation: "
+                                  f"{final_nonzero} non-zero pixels")
 
                     except Exception as manual_error:
-                        print(
-                            f"Manual transformation failed: {manual_error}")
+                        print(f"Manual transformation failed: "
+                              f"{manual_error}")
                         import traceback
                         traceback.print_exc()
 
@@ -487,10 +508,10 @@ class GeoTiffLayer:
             self.reprojected_transform = target_transform
 
             print(f"Final reprojected data shape: {reprojected.shape}")
-            print(
-                f"Final reprojected data range: {np.min(reprojected)} to {np.max(reprojected)}")
-            print(
-                f"Final non-zero pixels: {np.count_nonzero(reprojected)}")
+            print(f"Final reprojected data range: "
+                  f"{np.min(reprojected)} to {np.max(reprojected)}")
+            print(f"Final non-zero pixels: "
+                  f"{np.count_nonzero(reprojected)}")
 
             # Create wx.Image
             rgb_data = np.transpose(reprojected, (1, 2, 0))
@@ -1125,9 +1146,6 @@ class MapCanvas(wx.Panel):
             target_width = min(width, 1024)
             target_height = min(height, 1024)
 
-            # Add this in your draw_geotiff_layer method before reprojection:
-            if self.geotiff_layer.debug_coordinate_transform(intersect_bounds, (target_width, target_height)):
-                print("Coordinate transform debug completed")
 
             # Reproject
             if self.geotiff_layer.reproject_for_display(intersect_bounds,
@@ -1154,8 +1172,9 @@ class MapCanvas(wx.Panel):
                     se_screen_y = center_y + (
                                 se_tile_y_img - center_tile_y) * tile_size
 
-                    print(
-                        f"Screen positions: NW=({nw_screen_x}, {nw_screen_y}), SE=({se_screen_x}, {se_screen_y})")
+                    print(f"Screen positions: "
+                          f"NW=({nw_screen_x}, {nw_screen_y}), "
+                          f"SE=({se_screen_x}, {se_screen_y})")
 
                     # Calculate size
                     img_width = abs(se_screen_x - nw_screen_x)
