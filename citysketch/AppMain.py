@@ -18,6 +18,8 @@ from typing import List, Tuple, Optional
 
 import numpy as np
 import wx
+from fontTools.otlLib.builder import buildSingleSubstSubtable, \
+    buildSinglePosSubtable
 
 try:
     import rasterio
@@ -41,6 +43,8 @@ from ._version import __version__, __version_tuple__
 APP_NAME = "CitySketch"
 APP_VERSION = __version__
 APP_MINOR = '.'.join(str(x) for x in __version_tuple__[0:2])
+
+FEXT = '.csp'
 
 print(f"Starting {APP_NAME} {APP_MINOR} (v{APP_VERSION})")
 
@@ -1863,8 +1867,30 @@ class MainFrame(wx.Frame):
         """Open a CityJSON file"""
         dialog = wx.FileDialog(
             self,
+            "Open CitySketch project",
+            wildcard=f"CitySketch files (*{FEXT})|*{FEXT}|All files (*.*)|*.*",
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+        )
+
+        if dialog.ShowModal() == wx.ID_OK:
+            filepath = dialog.GetPath()
+            self.load_project(filepath)
+        dialog.Destroy()
+
+    def on_save(self, event):
+        """Save the current project"""
+        if self.current_file:
+            self.save_project(self.current_file)
+        else:
+            self.on_save_as(event)
+
+    def on_open_cityjson(self, event):
+        """Open a CityJSON file"""
+        dialog = wx.FileDialog(
+            self,
             "Open CityJSON file",
-            wildcard="CityJSON files (*.json)|*.json|All files (*.*)|*.*",
+            wildcard=f"CityJSON files (*{FEXT})|*{FEXT}"
+                     f"|All files (*.*)|*.*",
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
         )
 
@@ -1873,7 +1899,7 @@ class MainFrame(wx.Frame):
             self.load_cityjson(filepath)
         dialog.Destroy()
 
-    def on_save(self, event):
+    def on_save_cityjson(self, event):
         """Save the current project"""
         if self.current_file:
             self.save_cityjson(self.current_file)
@@ -1904,17 +1930,115 @@ class MainFrame(wx.Frame):
         """Save with a new filename"""
         dialog = wx.FileDialog(
             self,
-            "Save CityJSON file",
-            wildcard="CityJSON files (*.json)|*.json",
+            "Save CitySketch file",
+            wildcard=f"CitySketch files (*{FEXT})|*{FEXT}",
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
         )
 
         if dialog.ShowModal() == wx.ID_OK:
             filepath = dialog.GetPath()
-            if not filepath.endswith('.json'):
-                filepath += '.json'
-            self.save_cityjson(filepath)
+            if not filepath.endswith(FEXT):
+                filepath += FEXT
+            self.save_project(filepath)
         dialog.Destroy()
+
+    def load_project(self, filepath):
+        """Load a CityJSON file"""
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+
+            if data.get('type') != 'CitySketch':
+                wx.MessageBox("Not a valid CitySketch file", "Error",
+                              wx.OK | wx.ICON_ERROR)
+                return
+
+            # Clear current buildings
+            self.canvas.buildings.clear()
+
+            # Load Buildings
+            buildings_data = data.get('buildings', [])
+            if buildings_data:
+                batts = Building.__annotations__
+                for bldg in buildings_data:
+                    bs = [v(bldg[k]) for k,v in batts.items()]
+                    self.canvas.buildings.append(Building(*bs))
+
+            # Load editor settings
+            editor_settings = data.get('editor_settings', {})
+            if editor_settings:
+                # Restore map settings
+                map_provider_str = editor_settings.get('map_provider',
+                                                        'None')
+                for provider in MapProvider:
+                    if provider.value == map_provider_str:
+                        self.canvas.map_provider = provider
+                        break
+
+                self.canvas.geo_center_lat = float(editor_settings.get(
+                    'geo_center_lat', 49.4875))
+                self.canvas.geo_center_lon = float(editor_settings.get(
+                    'geo_center_lon', 8.4660))
+                self.canvas.geo_zoom = int(editor_settings.get('geo_zoom', 16))
+                self.canvas.storey_height = float(editor_settings.get(
+                    'storey_height', 3.3))
+
+                # Clear map tiles to reload with new settings
+                self.canvas.map_tiles.clear()
+
+
+            self.current_file = filepath
+            self.modified = False
+            self.SetTitle(f"{APP_NAME} - {filepath}")
+            self.canvas.zoom_to_buildings()
+            self.SetStatusText(
+                f"Loaded {len(self.canvas.buildings)} buildings")
+
+        except Exception as e:
+            wx.MessageBox(f"Error loading file: {str(e)}", "Error",
+                          wx.OK | wx.ICON_ERROR)
+
+    def save_project(self, filepath):
+        """Save to a CityJSON file"""
+        try:
+            # Create structure with metadata
+            data = {
+                "type": "CitySketch",
+                "version": "1.0",
+            }
+
+            buildings_data = []
+            for bldg in self.canvas.buildings:
+                batt = {}
+                for att in list(bldg.__dict__.keys()):
+                    batt[att] = str(bldg.__getattribute__(att))
+                buildings_data.append(batt)
+            data['buildings'] = buildings_data
+
+            editor_settings = {
+                "map_provider": self.canvas.map_provider.value,
+                "geo_center_lat": self.canvas.geo_center_lat,
+                "geo_center_lon": self.canvas.geo_center_lon,
+                "geo_zoom": self.canvas.geo_zoom,
+                "storey_height": self.canvas.storey_height
+            }
+            data["editor_settings"] = editor_settings
+
+            # Save to file
+            with open(filepath, 'w') as f:
+                json.dump(data, f, indent=2)
+
+            self.current_file = filepath
+            self.modified = False
+            self.SetTitle(f"{APP_NAME} - {filepath}")
+            self.SetStatusText(
+                f"Saved {len(self.canvas.buildings)} buildings to {filepath}")
+
+        except Exception as e:
+            wx.MessageBox(f"Error saving file: {str(e)}", "Error",
+                          wx.OK | wx.ICON_ERROR)
+
+
 
     def load_cityjson(self, filepath):
         """Load a CityJSON file"""
@@ -1932,23 +2056,23 @@ class MainFrame(wx.Frame):
 
             # Load metadata if available
             metadata = data.get('metadata', {})
-            creator_settings = metadata.get('cityjson_creator_settings',
+            editor_settings = metadata.get('cityjson_editor_settings',
                                             {})
-            if creator_settings:
+            if editor_settings:
                 # Restore map settings
-                map_provider_str = creator_settings.get('map_provider',
+                map_provider_str = editor_settings.get('map_provider',
                                                         'None')
                 for provider in MapProvider:
                     if provider.value == map_provider_str:
                         self.canvas.map_provider = provider
                         break
 
-                self.canvas.geo_center_lat = creator_settings.get(
+                self.canvas.geo_center_lat = editor_settings.get(
                     'geo_center_lat', 49.4875)
-                self.canvas.geo_center_lon = creator_settings.get(
+                self.canvas.geo_center_lon = editor_settings.get(
                     'geo_center_lon', 8.4660)
-                self.canvas.geo_zoom = creator_settings.get('geo_zoom', 16)
-                self.canvas.storey_height = creator_settings.get(
+                self.canvas.geo_zoom = editor_settings.get('geo_zoom', 16)
+                self.canvas.storey_height = editor_settings.get(
                     'storey_height', 3.3)
 
                 # Clear map tiles to reload with new settings
@@ -2067,7 +2191,7 @@ class MainFrame(wx.Frame):
                             all_vertices) if all_vertices else 0,
                     ],
                     "referenceSystem": f"https://www.opengis.net/def/crs/EPSG/0/4326",
-                    "cityjson_creator_settings": {
+                    "cityjson_editor_settings": {
                         "map_provider": self.canvas.map_provider.value,
                         "geo_center_lat": self.canvas.geo_center_lat,
                         "geo_center_lon": self.canvas.geo_center_lon,
