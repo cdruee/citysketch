@@ -70,12 +70,6 @@ def get_location_with_fallback():
         return (49.74795,6.67412)
 
 
-class SelectionMode(Enum):
-    NORMAL = "normal"
-    ADD_BUILDING = "add_building"
-    RECTANGLE_SELECT = "rectangle_select"
-
-
 class MapProvider(Enum):
     NONE = "None"
     OSM = "OpenStreetMap"

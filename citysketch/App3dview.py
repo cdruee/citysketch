@@ -385,49 +385,47 @@ class Building3DViewer(wx.Dialog):
             glColor4f(*rgb, alpha)  # Semi-transparent blue
 
             # Draw building faces
-            glBegin(GL_QUADS)
-
+            glBegin(GL_POLYGON)
             # Bottom face (ground)
-            glVertex3f(corners[0][0], corners[0][1], 0)
-            glVertex3f(corners[1][0], corners[1][1], 0)
-            glVertex3f(corners[2][0], corners[2][1], 0)
-            glVertex3f(corners[3][0], corners[3][1], 0)
+            for c in corners:
+                glVertex3f(c[0], c[1], 0)
+            glEnd()
 
             # Top face
-            glVertex3f(corners[0][0], corners[0][1], height)
-            glVertex3f(corners[3][0], corners[3][1], height)
-            glVertex3f(corners[2][0], corners[2][1], height)
-            glVertex3f(corners[1][0], corners[1][1], height)
+            glBegin(GL_POLYGON)
+            for c in corners:
+                glVertex3f(c[0], c[1], height)
+            glEnd()
 
             # Side faces
-            for i in range(4):
-                j = (i + 1) % 4
+            for i in range(len(corners)):
+                j = (i + 1) % len(corners)
+                glBegin(GL_QUADS)
                 # Bottom to top
                 glVertex3f(corners[i][0], corners[i][1], 0)
                 glVertex3f(corners[j][0], corners[j][1], 0)
                 glVertex3f(corners[j][0], corners[j][1], height)
                 glVertex3f(corners[i][0], corners[i][1], height)
-
-            glEnd()
+                glEnd()
 
         # Draw edges
         glColor4f(*rgb, max(1., alpha * 1.25))  # Solid blue edges
         glBegin(GL_LINES)
 
         # Bottom edges
-        for i in range(4):
-            j = (i + 1) % 4
+        for i in range(len(corners)):
+            j = (i + 1) % len(corners)
             glVertex3f(corners[i][0], corners[i][1], 0)
             glVertex3f(corners[j][0], corners[j][1], 0)
 
         # Top edges
-        for i in range(4):
-            j = (i + 1) % 4
+        for i in range(len(corners)):
+            j = (i + 1) % len(corners)
             glVertex3f(corners[i][0], corners[i][1], height)
             glVertex3f(corners[j][0], corners[j][1], height)
 
         # Vertical edges
-        for i in range(4):
+        for i in range(len(corners)):
             glVertex3f(corners[i][0], corners[i][1], 0)
             glVertex3f(corners[i][0], corners[i][1], height)
 

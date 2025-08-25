@@ -4,6 +4,8 @@ CitySketch Application
 A wxPython GUI application for creating and editing CityJSON files with building data.
 """
 
+from dataclasses import dataclass
+from enum import Enum
 import io
 import json
 import math
@@ -37,7 +39,7 @@ from .App3dview import OPENGL_SUPPORT, Building3DViewer
 from .Building import Building, BuildingGroup
 from .AppSettings import colorset, settings
 from .ColorDialogs import ColorSettingsDialog
-from .utils import SelectionMode, MapProvider, get_location_with_fallback
+from .utils import MapProvider, get_location_with_fallback
 from ._version import __version__, __version_tuple__
 
 APP_NAME = "CitySketch"
@@ -47,6 +49,23 @@ APP_MINOR = '.'.join(str(x) for x in __version_tuple__[0:2])
 FEXT = '.csp'
 
 print(f"Starting {APP_NAME} {APP_MINOR} (v{APP_VERSION})")
+
+# =========================================================================
+
+@dataclass
+class Preview:
+    anchor: Tuple[float, float]
+    a: float
+    b: float
+    r: float
+
+# =========================================================================
+
+class SelectMode(Enum):
+    NORMAL = "normal"
+    ADD_BUILDING = "add_building"
+    ADD_ROTUNDA = "add_rotunda"
+    RECTANGLE_SELECT = "rectangle_select"
 
 # =========================================================================
 
@@ -559,7 +578,7 @@ class MapCanvas(wx.Panel):
 
         # State
         self.buildings: List[Building] = []
-        self.mode = SelectionMode.NORMAL
+        self.mode = SelectMode.NORMAL
         self.snap_enabled = True
         self.zoom_level = 1.0
         self.pan_x = 0
@@ -820,11 +839,18 @@ class MapCanvas(wx.Panel):
             self.draw_selected_handles(gc)
 
         # Draw preview for new building
-        if self.mode == SelectionMode.ADD_BUILDING and self.floating_rect and self.current_mouse_pos:
-            self.draw_building_preview(gc)
+        if (self.mode in [SelectMode.ADD_BUILDING, SelectMode.ADD_ROTUNDA]
+                and self.floating_rect and self.current_mouse_pos):
+            if self.mode == SelectMode.ADD_BUILDING:
+                self.draw_building_preview(gc, mode='corner')
+            elif self.mode == SelectMode.ADD_ROTUNDA:
+                self.draw_building_preview(gc, mode='center')
+            else:
+                pass
 
         # Draw selection rectangle
-        if self.mode == SelectionMode.RECTANGLE_SELECT and self.selection_rect_start and self.current_mouse_pos:
+        if (self.mode == SelectMode.RECTANGLE_SELECT
+                and self.selection_rect_start and self.current_mouse_pos):
             self.draw_selection_rectangle(gc)
 
     def draw_map_tiles(self, dc):
@@ -984,52 +1010,65 @@ class MapCanvas(wx.Panel):
                 # Draw squares in normal mode
                 gc.DrawRectangle(sx - 4, sy - 4, 8, 8)
 
-    def draw_building_preview(self, gc):
+    def draw_building_preview(self, gc, mode:str='corner'):
         """Draw preview of building being created with rotation support"""
-        x1, y1 = self.floating_rect['anchor']
+        x1, y1 = self.floating_rect.anchor
         x2, y2 = self.screen_to_world(*self.current_mouse_pos)
+        dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        angle = math.atan2(y2 - y1, x2 - x1)
 
         ctrl_pressed = wx.GetKeyState(wx.WXK_CONTROL)
 
-        if ctrl_pressed and self.floating_rect:
-            # Calculate distance for fixed size
-            dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-            # Calculate angle
-            angle = math.atan2(y2 - y1, x2 - x1)
+        if mode == 'corner':
+            if ctrl_pressed and self.floating_rect:
+                # # Create a rectangle with constant aspect ratio
+                # old_dist = math.sqrt(self.floating_rect.b**2. +
+                #                      self.floating_rect.a**2.)
+                new_a = self.floating_rect.a
+                new_b = self.floating_rect.b
+                new_r = angle - math.atan2(new_b, new_a)
 
-            # Create a rectangle with constant aspect ratio
-            old_dist = math.sqrt(self.floating_rect['b']**2. +
-                                 self.floating_rect['a']**2.)
-            new_a = self.floating_rect['a']
-            new_b = self.floating_rect['b']
-            # new_a = self.floating_rect['a'] * dist/old_dist
-            # new_b = self.floating_rect['b'] * dist/old_dist
-            new_r = angle - math.atan2(new_b, new_a)
+            else:
+                # Scaling mode during creation
+                dx = x2 - x1
+                dy = y2 - y1
+                new_r = self.floating_rect.r
+                new_a = + math.cos(new_r) * dx + math.sin(new_r) * dy
+                new_b = - math.sin(new_r) * dx + math.cos(new_r) * dy
 
+            corners = [
+                (0., 0.),
+                (new_a, 0.),
+                (new_a, new_b),
+                (0., new_b)
+            ]
+
+        elif mode == 'center':
+            new_r = 0.
+            new_a = 0.
+            new_b = math.sqrt((x2 - x1) ** 2 + (y2 - y1)**2)
+
+            corners = [
+                (-new_b, -new_b),
+                (new_b, -new_b),
+                (new_b, new_b),
+                (-new_b, new_b)
+            ]
         else:
-            # Scaling mode during creation
-            dx = x2 - x1
-            dy = y2 - y1
-            new_r = self.floating_rect['r']
-            new_a = + math.cos(new_r) * dx + math.sin(new_r) * dy
-            new_b = - math.sin(new_r) * dx + math.cos(new_r) * dy
-
-        corners = [
-            (0., 0.),
-            (new_a, 0.),
-            (new_a, new_b),
-            (0., new_b)
-        ]
+            raise NotImplementedError
 
         # Draw rotated preview
         path = gc.CreatePath()
-        sx, sy = self.world_to_screen(x1, y1)
-        path.MoveToPoint(sx, sy)
-        for ca, cb in corners[1:]:
+        path_start = True
+        for ca, cb in corners:
             x = x1 + math.cos(new_r) * ca - math.sin(new_r) * cb
             y = y1 + math.sin(new_r) * ca + math.cos(new_r) * cb
             sx, sy = self.world_to_screen(x, y)
-            path.AddLineToPoint(sx, sy)
+            if path_start:
+                path.MoveToPoint(sx, sy)
+                path_start = False
+            else:
+                path.AddLineToPoint(sx, sy)
         path.CloseSubpath()
 
         gc.SetBrush(wx.Brush(colorset.get('COL_FLOAT_IN')))
@@ -1037,9 +1076,9 @@ class MapCanvas(wx.Panel):
                          2, wx.PENSTYLE_DOT))
         gc.DrawPath(path)
 
-        self.floating_rect['a'] = new_a
-        self.floating_rect['b'] = new_b
-        self.floating_rect['r'] = new_r
+        self.floating_rect.a = new_a
+        self.floating_rect.b = new_b
+        self.floating_rect.r = new_r
 
     def draw_selection_rectangle(self, gc):
         """Draw preview of building being created with rotation support"""
@@ -1249,38 +1288,39 @@ class MapCanvas(wx.Panel):
         wx, wy = self.screen_to_world(event.GetX(), event.GetY())
         ctrl_pressed = event.ControlDown()
 
-        if self.mode == SelectionMode.ADD_BUILDING:
+        if self.mode in [SelectMode.ADD_BUILDING, SelectMode.ADD_ROTUNDA]:
             if self.floating_rect is None:
                 # 1st click defines first corner (lower left)
-                self.floating_rect = {'anchor': self.snap_point(wx, wy),
-                                      'a': 0., 'b': 0., 'r': 0.}
+                self.floating_rect = Preview(
+                    anchor=self.snap_point(wx, wy),
+                    a=0., b=0., r=0.)
                 self.statusbar.SetStatusText(
                     "Move to draw, press Ctrl to rotate, click to finish")
             else:
                 # 2nd click defines 2n corner (upper right) and adds bldg.
-                x1, y1 = self.floating_rect['anchor']
+                x1, y1 = self.floating_rect.anchor
                 building = Building(
                     id=str(uuid.uuid4()),
                     x1=x1,
                     y1=y1,
-                    a=self.floating_rect['a'],
-                    b=self.floating_rect['b'],
+                    a=self.floating_rect.a,
+                    b=self.floating_rect.b,
                     height=self.storey_height * 3,
                     storeys=3,
-                    rotation=self.floating_rect['r']
+                    rotation=self.floating_rect.r
                 )
 
                 self.buildings.append(building)
                 self.floating_rect = None
-                self.mode = SelectionMode.NORMAL
+                self.mode = SelectMode.NORMAL
                 self.statusbar.SetStatusText(
                     f"Added building #{len(self.buildings)}")
                 self.Refresh()
 
-        elif self.mode == SelectionMode.NORMAL:
+        elif self.mode == SelectMode.NORMAL:
             if event.ShiftDown():
                 # shift-click on map: start spanning rectangle selection
-                self.mode = SelectionMode.RECTANGLE_SELECT
+                self.mode = SelectMode.RECTANGLE_SELECT
                 self.selection_rect_start = event.GetPosition()
             else:
                 # check for corner drag
@@ -1335,7 +1375,7 @@ class MapCanvas(wx.Panel):
         """Handle mouse up events"""
         self.mouse_down = False
 
-        if self.mode == SelectionMode.RECTANGLE_SELECT:
+        if self.mode == SelectMode.RECTANGLE_SELECT:
             x1, y1 = self.screen_to_world(*self.selection_rect_start)
             x2, y2 = self.screen_to_world(event.GetX(), event.GetY())
 
@@ -1348,7 +1388,7 @@ class MapCanvas(wx.Panel):
                         lo >= ry1 and up <= ry2):
                     self.selected_buildings.add(building)
 
-            self.mode = SelectionMode.NORMAL
+            self.mode = SelectMode.NORMAL
             self.selection_rect_start = None
             self.Refresh()
 
@@ -1398,10 +1438,11 @@ class MapCanvas(wx.Panel):
             self.Refresh()
 
         # Update preview
-        if self.mode == SelectionMode.ADD_BUILDING and self.floating_rect:
+        if (self.mode in [SelectMode.ADD_BUILDING, SelectMode.ADD_ROTUNDA]
+                and self.floating_rect):
             self.Refresh()
 
-        if self.mode == SelectionMode.RECTANGLE_SELECT:
+        if self.mode == SelectMode.RECTANGLE_SELECT:
             self.Refresh()
 
         # Update corner appearance when Ctrl is pressed/released
@@ -1608,9 +1649,15 @@ class MainFrame(wx.Frame):
         toolbar = self.CreateToolBar(wx.TB_HORIZONTAL | wx.TB_FLAT)
 
         # Add Building button
-        self.add_building_btn = wx.Button(toolbar, label="Add Building")
+        self.add_building_btn = wx.Button(toolbar,
+                                          label="Add Block Building")
         self.add_building_btn.Bind(wx.EVT_BUTTON, self.on_add_building)
         toolbar.AddControl(self.add_building_btn)
+
+        self.add_rotunda_btn = wx.Button(toolbar,
+                                          label="Add Round Building")
+        self.add_rotunda_btn.Bind(wx.EVT_BUTTON, self.on_add_rotunda)
+        toolbar.AddControl(self.add_rotunda_btn)
 
         toolbar.AddSeparator()
 
@@ -1702,9 +1749,15 @@ class MainFrame(wx.Frame):
 
     def on_add_building(self, event):
         """Switch to add building mode"""
-        self.canvas.mode = SelectionMode.ADD_BUILDING
+        self.canvas.mode = SelectMode.ADD_BUILDING
         self.canvas.floating_rect = None
         self.SetStatusText("Click to place first corner of building")
+
+    def on_add_rotunda(self, event):
+        """Switch to add building mode"""
+        self.canvas.mode = SelectMode.ADD_ROTUNDA
+        self.canvas.floating_rect = None
+        self.SetStatusText("Click to place first center of building")
 
     def on_toggle_snap(self, event):
         """Toggle snapping"""

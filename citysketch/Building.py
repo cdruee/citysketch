@@ -3,6 +3,8 @@ import statistics
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
+from .AppSettings import settings
+
 # =========================================================================
 
 @dataclass
@@ -11,8 +13,8 @@ class Building:
     id: str
     x1: float  # corner #0
     y1: float  # corner #0
-    a: float  # extent along x axis (when rotation is 0)
-    b: float  # extent along y axis (when rotation is 0)
+    a: float  # extent along x axis (when rotation is 0) or  0 (cylindrical)
+    b: float  # extent along y axis (when rotation is 0) or diameter
     height: float = 10.0  # meters
     storeys: int = 3
     # selected: bool = False
@@ -45,17 +47,26 @@ class Building:
 
     def get_corners(self) -> List[Tuple[float, float]]:
         """Get all four corners after rotation"""
-        corners = [
-            (0., 0.),  # 0: bottom-left
-            (self.a, 0.),  # 1: bottom-right
-            (self.a, self.b),  # 2: top-right
-            (0., self.b),  # 3: top-left
-        ]
+        if self.a <= 0:
+            # cylidrical building
+            nc = settings.get('CIRCLE_CORNERS') + 1
+            dr = 2 * math.pi / nc
+            corners = [
+                (self.b * math.cos(i * dr),
+                 self.b * math.sin(i * dr)) for i in range(nc)
+            ]
+        else:
+            # block building
+            corners = [
+                (0., 0.),  # 0: bottom-left
+                (self.a, 0.),  # 1: bottom-right
+                (self.a, self.b),  # 2: top-right
+                (0., self.b),  # 3: top-left
+            ]
 
         rotated = []
         for px, py in corners:
             rotated.append(self.building_to_world(px, py))
-
         return rotated
 
     def get_llur(self) -> Tuple[float, float,float, float]:
@@ -103,12 +114,17 @@ class Building:
     def scale_to_corner(self, corner_index: int, new_x: float,
                         new_y: float):
         """Move a specific corner (for scaling / rotation)"""
+        old_x, old_y = self.get_corners()[corner_index]
+        a_old, b_old = self.word_to_building(old_x, old_y)
         a_new, b_new = self.word_to_building(new_x, new_y)
+
+        a_stretch = a_old / a_new
+        b_stretch = b_old / b_new
         if corner_index != 0:
             if corner_index in [1, 2]:
-                self.a = a_new
+                self.a = self.a * a_stretch
             if corner_index in [2, 3]:
-                self.b = b_new
+                self.b = self.b * b_stretch
         else:
             self.translate(new_x, new_y)
 
@@ -123,29 +139,29 @@ class Building:
 
     def to_cityjson_geometry(self) -> dict:
         """Convert to CityJSON geometry format"""
-        # Get rotated corners for the base
-        rotated_corners = self.get_corners()
-
-        # Create vertices for the building (8 points for a box)
-        vertices = []
-        # Bottom face
-        for cx, cy in rotated_corners:
-            vertices.append([cx, cy, 0.0])
-        # Top face
-        for cx, cy in rotated_corners:
-            vertices.append([cx, cy, self.height])
-
-        # Define faces (indices into vertices array)
-        boundaries = [
-            [[0, 1, 2, 3]],  # bottom
-            [[4, 7, 6, 5]],  # top
-            [[0, 4, 5, 1]],  # front
-            [[2, 6, 7, 3]],  # back
-            [[0, 3, 7, 4]],  # left
-            [[1, 5, 6, 2]],  # right
-        ]
-
-        return vertices, boundaries
+        # # Get rotated corners for the base
+        # rotated_corners = self.get_corners()
+        #
+        # # Create vertices for the building (8 points for a box)
+        # vertices = []
+        # # Bottom face
+        # for cx, cy in rotated_corners:
+        #     vertices.append([cx, cy, 0.0])
+        # # Top face
+        # for cx, cy in rotated_corners:
+        #     vertices.append([cx, cy, self.height])
+        #
+        # # Define faces (indices into vertices array)
+        # boundaries = [
+        #     [[0, 1, 2, 3]],  # bottom
+        #     [[4, 7, 6, 5]],  # top
+        #     [[0, 4, 5, 1]],  # front
+        #     [[2, 6, 7, 3]],  # back
+        #     [[0, 3, 7, 4]],  # left
+        #     [[1, 5, 6, 2]],  # right
+        # ]
+        #
+        # return vertices, boundaries
 
 # =========================================================================
 

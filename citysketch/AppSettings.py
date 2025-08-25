@@ -20,7 +20,10 @@ class ParameterSettings:
     PARAMETER_DEFINITIONS = {
         'ZOOM_STEP_PERCENT': ParameterDefinition (
             20, int, 'Zoom step percentage'
-        )
+        ),
+        'CIRCLE_CORNERS': ParameterDefinition(
+            12, int, 'Corners of a polygon representing circle'
+        ),
     }
 
     def __init__(self):
