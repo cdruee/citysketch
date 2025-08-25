@@ -22,12 +22,19 @@ def save_to_austaltxt(path, buildings):
     xy_in = [(b.x,b.y) for b in buildings]
     xy_out = [transform(x,y) for x,y in xy_in]
 
-    austxt['ab'] = [x for x,y in xy_out]
-    austxt['yb'] = [y for x,y in xy_out]
-    austxt['ab'] = [b.a for b in buildings]
-    austxt['bb'] = [b.b for b in buildings]
-    austxt['cb'] = [b.height for b in buildings]
-    austxt['wb'] = [math2geo(b.rotation) for b in buildings]
+    for i, building in enumerate(buildings):
+        austxt['ab'].append(xy_out[i][0])
+        austxt['yb'].append(xy_out[i][1])
+        if building.a > 0:
+            # block building
+            austxt['ab'].append(building.a)
+            austxt['bb'].append(building.b)
+        else:
+            # cylindical building
+            austxt['ab'].append(0.)
+            austxt['bb'].append(-building.b)
+        austxt['cb'].append(building.height)
+        austxt['wb'].append(math2geo(building.rotation))
 
     put_austxt(austxt, path)
 

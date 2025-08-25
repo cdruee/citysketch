@@ -957,8 +957,8 @@ class MapCanvas(wx.Panel):
         gc.DrawPath(path)
 
         # Draw height text at center
-        cx = sum(c[0] for c in corners) / 4
-        cy = sum(c[1] for c in corners) / 4
+        cx = sum(c[0] for c in corners) / len(corners)
+        cy = sum(c[1] for c in corners) / len(corners)
         scx, scy = self.world_to_screen(cx, cy)
 
         gc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
@@ -1036,12 +1036,17 @@ class MapCanvas(wx.Panel):
                 new_a = + math.cos(new_r) * dx + math.sin(new_r) * dy
                 new_b = - math.sin(new_r) * dx + math.cos(new_r) * dy
 
+            if new_a <= 0 or new_b <= 0:
+                # do no accept negtaive values, do not draw
+                return
+
             corners = [
                 (0., 0.),
                 (new_a, 0.),
                 (new_a, new_b),
                 (0., new_b)
             ]
+
 
         elif mode == 'center':
             new_r = 0.
@@ -1054,8 +1059,11 @@ class MapCanvas(wx.Panel):
                 (new_b, new_b),
                 (-new_b, new_b)
             ]
+
+            # new b cannot be < 0
+
         else:
-            raise NotImplementedError
+            print(f"Unknown preview mode {mode}")
 
         # Draw rotated preview
         path = gc.CreatePath()
@@ -1455,17 +1463,7 @@ class MapCanvas(wx.Panel):
         mx, my = event.GetPosition()
 
         zoom_factor = 1.1 if rotation > 0 else 0.9
-        new_zoom = self.zoom_level * zoom_factor
-        new_zoom = max(0.1, min(10.0, new_zoom))
-
-        wx, wy = self.screen_to_world(mx, my)
-        self.zoom_level = new_zoom
-        new_mx, new_my = self.world_to_screen(wx, wy)
-
-        self.pan_x += mx - new_mx
-        self.pan_y += my - new_my
-
-        self.Refresh()
+        self.zoom_view(zoom_factor, mx, my)
 
     def on_size(self, event):
         """Handle resize events"""
@@ -1484,6 +1482,25 @@ class MapCanvas(wx.Panel):
         for b in self.selected_buildings.buildings.copy():
             self.selected_buildings.remove(b)
             self.buildings = [x for x in self.buildings if x != b]
+        self.Refresh()
+
+    def zoom_view(self, factor, apex_x=None, apex_y=None):
+
+        if apex_x is None or apex_y is None:
+            width, height = self.GetSize()
+            apex_x = width / 2.
+            apex_y = height / 2.
+
+        new_zoom = self.zoom_level * factor
+        new_zoom = max(0.1, min(10.0, new_zoom))
+
+        wx, wy = self.screen_to_world(apex_x, apex_y)
+        self.zoom_level = new_zoom
+        new_mx, new_my = self.world_to_screen(wx, wy)
+
+        self.pan_x += apex_x - new_mx
+        self.pan_y += apex_y - new_my
+
         self.Refresh()
 
     def zoom_to_buildings(self):
@@ -1804,23 +1821,15 @@ class MainFrame(wx.Frame):
             self.SetStatusText(f"Deleted "
             f"{len(self.canvas.selected_buildings)} building(s).")
 
-    def zoom_view(self, factor):
-        self.canvas.zoom_level *= factor
-        width, height = self.canvas.GetSize()
-        self.canvas.pan_x -= width * (factor - 1.) / 2.
-        self.canvas.pan_y += height * (factor - 1.) / 2.
-        self.canvas.zoom_level = min(10.0, self.canvas.zoom_level)
-        self.canvas.Refresh()
-
     def on_zoom_in(self, event):
         """Zoom in"""
         factor = (100. + float(settings.get('ZOOM_STEP_PERCENT'))) / 100.
-        return self.zoom_view(factor)
+        return self.canvas.zoom_view(factor)
 
     def on_zoom_out(self, event):
         """Zoom out"""
         factor = 100. / (100. + float(settings.get('ZOOM_STEP_PERCENT')))
-        return self.zoom_view(factor)
+        return self.canvas.zoom_view(factor)
 
     def on_zoom_to_buildings(self, event):
         """Zoom to fit all buildings"""
