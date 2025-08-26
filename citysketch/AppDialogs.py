@@ -2,7 +2,17 @@ import re
 import sys
 
 import wx
-from numpy import __version__ as numpy_version
+from numpy import __version__ as numpy_ver
+
+try:
+    from rasterio import __version__ as rasterio_ver
+except ImportError:
+    rasterio_ver = None
+try:
+    from osgeo import __version__ as gdal_ver
+except ImportError:
+    gdal_ver = None
+
 
 from ._version import __version__
 from .utils import MapProvider
@@ -45,7 +55,9 @@ class AboutDialog(wx.Dialog):
                               f'Library Versions:\n'
                               f'- wxPython: {wx.__version__}\n'
                               f'- Python: {sys.version.split()[0]}\n'
-                              f'- NumPy: {numpy_version}')
+                              f'- NumPy: {numpy_ver}\n'
+                              f'- rasterio: {rasterio_ver}\n'
+                              f'- gdal: {gdal_ver}')
         szrRight.Add(label, 0, wx.LEFT | wx.TOP | wx.ALIGN_CENTER, 5)
 
         label = wx.StaticText(self, wx.ID_STATIC,

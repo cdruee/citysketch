@@ -502,7 +502,7 @@ class ColorSettingsDialog(wx.Dialog):
         self.color_buttons = []
 
         for key in self.color_settings.get_all_keys():
-            definition = self.color_settings.get_description(key)
+            description = self.color_settings.get_description(key)
             color = self.color_settings.get(key)
 
             # Create horizontal sizer for this color row
@@ -525,7 +525,7 @@ class ColorSettingsDialog(wx.Dialog):
 
             # Create description label
             desc_label = wx.StaticText(self.color_parent,
-                                       label=definition.description,
+                                       label=description,
                                        size=(400, -1))
             desc_label.SetToolTip(f"Internal name: {key}")
 

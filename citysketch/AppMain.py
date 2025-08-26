@@ -37,6 +37,7 @@ from .App3dview import OPENGL_SUPPORT, Building3DViewer
 from .Building import Building, BuildingGroup
 from .AppSettings import colorset, settings
 from .ColorDialogs import ColorSettingsDialog
+from .austaltxt import load_from_austaltxt, save_to_austaltxt
 from .utils import MapProvider, get_location_with_fallback
 from ._version import __version__, __version_tuple__
 
@@ -1576,6 +1577,13 @@ class MainFrame(wx.Frame):
         file_menu.Append(wx.ID_SAVEAS, "Save &As...\tCtrl+Shift+S",
                          "Save with a new name")
         file_menu.AppendSeparator()
+        import_austal = file_menu.Append(
+            wx.ID_ANY, "&Import from AUSTAL",
+            "Import Buildings from austal.txt")
+        export_austal = file_menu.Append(
+            wx.ID_ANY, "&Export to AUSTAL",
+            "Export Buildings to austal.txt")
+        file_menu.AppendSeparator()
         file_menu.Append(wx.ID_EXIT, "E&xit\tCtrl+Q",
                          "Exit the application")
 
@@ -1583,16 +1591,13 @@ class MainFrame(wx.Frame):
         edit_menu = wx.Menu()
         basemap_item = edit_menu.Append(wx.ID_ANY, "Select &Basemap",
                                         "Choose a basemap")
-
-        # Add color settings menu item
-        edit_menu.AppendSeparator()
-        color_settings_item = edit_menu.Append(wx.ID_ANY,
-                                               "&Color Settings...",
-                                               "Configure application colors")
+        zoom_item = edit_menu.Append(wx.ID_ANY,
+                                     "&Zoom to Buildings\tCtrl+0",
+                                     "Zoom to fit all buildings")
 
         if GEOTIFF_SUPPORT:
             edit_menu.AppendSeparator()
-            geotiff_item = file_menu.Append(wx.ID_ANY,
+            geotiff_item = edit_menu.Append(wx.ID_ANY,
                                             "Load &GeoTIFF...",
                                             "Load a GeoTIFF overlay")
             geotiff_set_item = edit_menu.Append(wx.ID_ANY,
@@ -1604,9 +1609,6 @@ class MainFrame(wx.Frame):
                                             "Show &3D View\tF3",
                                             "Show buildings in 3D view")
         edit_menu.AppendSeparator()
-        zoom_item = edit_menu.Append(wx.ID_ANY,
-                                     "&Zoom to Buildings\tCtrl+0",
-                                     "Zoom to fit all buildings")
         storey_item = edit_menu.Append(wx.ID_ANY,
                                        "Set Storey &Height",
                                        "Set the height per storey")
@@ -1635,6 +1637,10 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_open, id=wx.ID_OPEN)
         self.Bind(wx.EVT_MENU, self.on_save, id=wx.ID_SAVE)
         self.Bind(wx.EVT_MENU, self.on_save_as, id=wx.ID_SAVEAS)
+        self.Bind(wx.EVT_MENU, self.on_open_austal,
+                  id=import_austal.GetId())
+        self.Bind(wx.EVT_MENU, self.on_save_austal,
+                  id=export_austal.GetId())
         self.Bind(wx.EVT_MENU, self.on_exit, id=wx.ID_EXIT)
         self.Bind(wx.EVT_MENU, self.on_about, id=wx.ID_ABOUT)
         self.Bind(wx.EVT_MENU, self.on_color_settings,
@@ -1903,6 +1909,28 @@ class MainFrame(wx.Frame):
         # Refresh the canvas to show color changes
         self.canvas.Refresh()
 
+
+    def on_show_3d_view(self, event):
+        """Show 3D view of buildings"""
+        if not OPENGL_SUPPORT:
+            wx.MessageBox("3D view requires OpenGL support.\n\n"
+                         "Please install PyOpenGL:\n"
+                         "pip install PyOpenGL PyOpenGL_accelerate",
+                         "OpenGL Missing",
+                         wx.OK | wx.ICON_WARNING)
+            return
+
+        if not self.canvas.buildings:
+            wx.MessageBox("No buildings to display in 3D view.", "No Buildings",
+                         wx.OK | wx.ICON_INFORMATION)
+            return
+
+        # Create and show 3D viewer
+        viewer = Building3DViewer(self, self.canvas.buildings, self.canvas.selected_buildings)
+        viewer.ShowModal()
+        viewer.Destroy()
+
+
     def on_new(self, event):
         """Create a new project"""
         if self.modified:
@@ -1944,6 +1972,36 @@ class MainFrame(wx.Frame):
         else:
             self.on_save_as(event)
 
+    def on_open_austal(self, event):
+        """Open a CityJSON file"""
+        dialog = wx.FileDialog(
+            self,
+            "Open AUSTAL settings file",
+            defaultFile="austal.txt",
+            wildcard=f"AUSTAL files (austal.txt)|austal.txt",
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+        )
+
+        if dialog.ShowModal() == wx.ID_OK:
+            filepath = dialog.GetPath()
+            self.load_austal(filepath)
+        dialog.Destroy()
+
+    def on_save_austal(self, event):
+        """Save with a new filename"""
+        dialog = wx.FileDialog(
+            self,
+            "Export to AUSTAL settings file",
+            defaultFile="austal.txt",
+            wildcard=f"AUSTAL files (austal.txt)|austal.txt",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
+        )
+
+        if dialog.ShowModal() == wx.ID_OK:
+            filepath = dialog.GetPath()
+            self.save_austal(filepath)
+        dialog.Destroy()
+
     def on_open_cityjson(self, event):
         """Open a CityJSON file"""
         dialog = wx.FileDialog(
@@ -1965,26 +2023,6 @@ class MainFrame(wx.Frame):
             self.save_cityjson(self.current_file)
         else:
             self.on_save_as(event)
-
-    def on_show_3d_view(self, event):
-        """Show 3D view of buildings"""
-        if not OPENGL_SUPPORT:
-            wx.MessageBox("3D view requires OpenGL support.\n\n"
-                         "Please install PyOpenGL:\n"
-                         "pip install PyOpenGL PyOpenGL_accelerate",
-                         "OpenGL Missing",
-                         wx.OK | wx.ICON_WARNING)
-            return
-
-        if not self.canvas.buildings:
-            wx.MessageBox("No buildings to display in 3D view.", "No Buildings",
-                         wx.OK | wx.ICON_INFORMATION)
-            return
-
-        # Create and show 3D viewer
-        viewer = Building3DViewer(self, self.canvas.buildings, self.canvas.selected_buildings)
-        viewer.ShowModal()
-        viewer.Destroy()
 
     def on_save_as(self, event):
         """Save with a new filename"""
@@ -2112,6 +2150,98 @@ class MainFrame(wx.Frame):
                           wx.OK | wx.ICON_ERROR)
 
 
+    def load_austal(self, filepath):
+        """Load a CityJSON file"""
+        try:
+            lat, lon, buildings = load_from_austaltxt(filepath)
+
+            self.canvas.geo_center_lat = lat
+            self.canvas.geo_center_lon = lon
+            self.canvas.buildings.clear()
+            self.canvas.buildings = buildings
+            self.modified = False
+            self.SetTitle(f"{APP_NAME} - {filepath}")
+            self.canvas.zoom_to_buildings()
+            self.SetStatusText(
+                f"Loaded {len(self.canvas.buildings)} buildings")
+
+        except Exception as e:
+            wx.MessageBox(f"Error loading file: {str(e)}", "Error",
+                          wx.OK | wx.ICON_ERROR)
+
+
+    def save_austal(self, filepath):
+        """Save to a CityJSON file"""
+        try:
+            lat = self.canvas.geo_center_lat
+            lon = self.canvas.geo_center_lon
+            buildings = self.canvas.buildings
+
+            save_to_austaltxt(filepath, lat, lon, buildings)
+            self.modified = False
+            self.SetTitle(f"{APP_NAME} - {filepath}")
+            self.SetStatusText(
+                f"Saved {len(self.canvas.buildings)} buildings to {filepath}")
+
+        except Exception as e:
+            wx.MessageBox(f"Error saving file: {str(e)}", "Error",
+                          wx.OK | wx.ICON_ERROR)
+
+
+    def on_load_geotiff(self, event):
+        """Load a GeoTIFF file"""
+        if not GEOTIFF_SUPPORT:
+            wx.MessageBox("GeoTIFF support not available.\n\n"
+                          "Please install the following packages:\n"
+                          "- gdal (conda install gdal or pip install gdal)\n"
+                          "- rasterio (pip install rasterio)",
+                          "GeoTIFF Support Missing",
+                          wx.OK | wx.ICON_WARNING)
+            return
+
+        dialog = wx.FileDialog(
+            self,
+            "Load GeoTIFF file",
+            wildcard="GeoTIFF files (*.tif;*.tiff)|*.tif;*.tiff|All files (*.*)|*.*",
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+        )
+
+        if dialog.ShowModal() == wx.ID_OK:
+            filepath = dialog.GetPath()
+
+            # Show progress dialog for large files
+            progress = wx.ProgressDialog("Loading GeoTIFF",
+                                         "Loading and processing GeoTIFF file...",
+                                         maximum=100, parent=self,
+                                         style=wx.PD_AUTO_HIDE | wx.PD_APP_MODAL)
+            progress.Pulse()
+
+            try:
+                success = self.canvas.load_geotiff(filepath)
+                progress.Destroy()
+
+                if success:
+                    self.SetStatusText(
+                        f"Loaded GeoTIFF: {os.path.basename(filepath)}")
+
+                    # Optionally show settings dialog
+                    result = wx.MessageBox(
+                        "GeoTIFF loaded successfully!\n\n"
+                        "Would you like to adjust the overlay settings?",
+                        "GeoTIFF Loaded",
+                        wx.YES_NO | wx.ICON_QUESTION
+                    )
+                    if result == wx.YES:
+                        self.on_geotiff_settings(None)
+                else:
+                    self.SetStatusText("Failed to load GeoTIFF")
+
+            except Exception as e:
+                progress.Destroy()
+                wx.MessageBox(f"Error loading GeoTIFF: {str(e)}", "Error",
+                              wx.OK | wx.ICON_ERROR)
+
+        dialog.Destroy()
 
     def load_cityjson(self, filepath):
         """Load a CityJSON file"""
