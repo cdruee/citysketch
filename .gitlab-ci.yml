@@ -18,15 +18,13 @@ stages:
 build_sdist:
   image: python:latest
   stage: build
-  variables:
-    GIT_DEPTH: 0  # Fetch full git history including tags
   before_script:
     - git fetch --tags  # Ensure tags are available
     - pip install build setuptools setuptools-scm
   script:
     - python -m setuptools_scm  # This will show what version setuptools-scm detects
     - git describe --tags --dirty  # Show current git state
-    - python -m build --sdist
+    - python -m build -n --sdist
     - echo 'ls dist/*tar.gz'
     - ls dist/*tar.gz
     - echo 'cd dist && ls *tar.gz'
