@@ -502,7 +502,7 @@ class ColorSettingsDialog(wx.Dialog):
         self.color_buttons = []
 
         for key in self.color_settings.get_all_keys():
-            definition = self.color_settings.get_definition(key)
+            definition = self.color_settings.get_description(key)
             color = self.color_settings.get(key)
 
             # Create horizontal sizer for this color row
@@ -548,7 +548,7 @@ class ColorSettingsDialog(wx.Dialog):
 
     def on_color_button_clicked(self, event, key):
         """Handle color button click"""
-        definition = self.color_settings.get_definition(key)
+        definition = self.color_settings.get_description(key)
         current_color = self.color_settings.get(key)
 
         # Open color picker dialog

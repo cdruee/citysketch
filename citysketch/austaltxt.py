@@ -32,7 +32,8 @@ def save_to_austaltxt(path, buildings):
         else:
             # cylindical building
             austxt['ab'].append(0.)
-            austxt['bb'].append(-building.b)
+            # austal: amount of (negative) bb is diameter
+            austxt['bb'].append(-2 * building.b)
         austxt['cb'].append(building.height)
         austxt['wb'].append(math2geo(building.rotation))
 

@@ -20,8 +20,6 @@ from typing import List, Tuple, Optional
 
 import numpy as np
 import wx
-from fontTools.otlLib.builder import buildSingleSubstSubtable, \
-    buildSinglePosSubtable
 
 try:
     import rasterio
@@ -2048,6 +2046,13 @@ class MainFrame(wx.Frame):
                 # Clear map tiles to reload with new settings
                 self.canvas.map_tiles.clear()
 
+            color_settings = data.get('color_settings', None)
+            if color_settings:
+                colorset.from_dict()
+
+            general_settings = data.get('general_settings', None)
+            if general_settings:
+                settings.from_dict()
 
             self.current_file = filepath
             self.modified = False
@@ -2085,6 +2090,12 @@ class MainFrame(wx.Frame):
                 "storey_height": self.canvas.storey_height
             }
             data["editor_settings"] = editor_settings
+
+            color_settings = colorset.to_dict()
+            data['color_settings'] = color_settings
+
+            general_settings = settings.to_dict()
+            data['general_settings'] = general_settings
 
             # Save to file
             with open(filepath, 'w') as f:

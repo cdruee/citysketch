@@ -1,33 +1,26 @@
+from dataclasses import dataclass
 from typing import Any, Dict, NamedTuple, Optional, Tuple, Type
 
 import wx
 
-
-class ColorDefinition(NamedTuple):
-    """Defines a color with default value and description"""
-    default: Tuple[int, int, int, int]  # RGBA tuple instead of wx.Colour
+@dataclass
+class Definition:
+    value: Any
     description: str
 
-class ParameterDefinition(NamedTuple):
-    """Defines a view setting, default value and description"""
-    default: Optional[Any]
-    type: Type
-    description: str
+class Definitions(dict):
+    def __init__(self, values: Optional[Dict[str, Definition]] = None):
+        super().__init__()
+        if values:
+            self.update(values)
 
-class ParameterSettings:
+class Settings():
     """Centralized view params for the application"""
+    _defaults = Definitions()
+    _values = Definitions()
 
-    PARAMETER_DEFINITIONS = {
-        'ZOOM_STEP_PERCENT': ParameterDefinition (
-            20, int, 'Zoom step percentage'
-        ),
-        'CIRCLE_CORNERS': ParameterDefinition(
-            12, int, 'Corners of a polygon representing circle'
-        ),
-    }
-
-    def __init__(self):
-        self._parameters: Dict[str, Any] = {}
+    def __init__(self, defaults: Definitions):
+        self._defaults = defaults
         self._initialized = False
 
     def _ensure_initialized(self):
@@ -38,160 +31,120 @@ class ParameterSettings:
 
     def _load_defaults(self):
         """Load default color values"""
-        for key, definition in self.PARAMETER_DEFINITIONS.items():
-            self._parameters[key] = definition.default
+        for key, definition in self._defaults.items():
+            self._values[key] = definition
 
-    def get(self, key: str) -> wx.Colour:
+    def get(self, key: str) -> Any:
         """Get params by key"""
         self._ensure_initialized()
-        if key not in self._parameters:
+        if key not in self._values:
             raise KeyError(f"Parameter '{key}' not defined")
-        return self._parameters[key]
+        return self._values[key].value
 
     def set(self, key: str, value: Any):
         """Set params by key"""
         self._ensure_initialized()
-        if key not in self.PARAMETER_DEFINITIONS:
+        if key not in self._values:
             raise KeyError(f"Parameter '{key}' not defined")
-        if not isinstance(value, self._parameters[key]):
-            try:
-                value = self._parameters[key].type(value)
-            except TypeError:
-                raise TypeError(f"Parameter '{key}' must "
-                                f"be of type {type(value)}")
-        self._parameters[key] = value
+        if not isinstance(value, self._values[key]):
+            raise TypeError(f"Parameter '{key}' must "
+                            f"be of type {type(value)}")
+        self._values[key] = value
 
-    def get_definition(self, key: str) -> ParameterDefinition:
+    def get_description(self, key: str) -> Definition:
         """Get color definition by key"""
-        if key not in self.PARAMETER_DEFINITIONS:
+        if key not in self._values:
             raise KeyError(f"Parameter '{key}' not defined")
-        return self.PARAMETER_DEFINITIONS[key]
+        return self._values[key].description
 
     def get_all_keys(self):
         """Get all available color keys"""
-        return list(self.PARAMETER_DEFINITIONS.keys())
+        return list(self._defaults.keys())
 
     def reset_to_defaults(self):
         """Reset all params to default params"""
-        self._parameters.clear()
+        self._values.clear()
         self._initialized = False
         self._ensure_initialized()
 
     def reset_param_to_default(self, key: str):
         """Reset a specific color to its default param"""
-        if key not in self.PARAMETER_DEFINITIONS:
+        if key not in self._defaults:
             raise KeyError(f"Parameter '{key}' not defined")
-        self._parameters[key] = self.PARAMETER_DEFINITIONS[key].default
+        self._values[key] = self._defaults[key]
+
+    def from_dict(self, dictionary: Dict):
+        for k, v in dictionary.items():
+            if k not in self._defaults.keys():
+                raise KeyError(f"Color '{k}' not defined")
+            self.set(k, v)
+        return True
+
+    def to_dict(self):
+        return {x: self.get(x) for x in self.get_all_keys()}
 
 
-class ColorSettings:
-    """Centralized color management for the application"""
+PARAMETER_DEFINITIONS = Definitions({
+    'ZOOM_STEP_PERCENT': Definition (
+        20, 'Zoom step percentage'
+    ),
+    'CIRCLE_CORNERS': Definition(
+        12, 'Corners of a polygon representing circle'
+    ),
+})
 
-    # Define all application colors here using RGBA tuples
-    COLOR_DEFINITIONS = {
-        # Tile colors
-        'COL_TILE_EMPTY': ColorDefinition(
-            (200, 200, 200, 255), 'Empty map tile background'
-        ),
-        'COL_TILE_EDGE': ColorDefinition(
-            (240, 240, 240, 255), 'Map tile edge border'
-        ),
 
-        # Grid colors
-        'COL_GRID': ColorDefinition(
-            (220, 220, 220, 255), 'Background grid lines'
-        ),
 
-        # Building preview colors
-        'COL_FLOAT_IN': ColorDefinition(
-            (100, 255, 100, 100), 'Building preview fill'
-        ),
-        'COL_FLOAT_OUT': ColorDefinition(
-            (0, 200, 0, 255), 'Building preview outline'
-        ),
+COLOR_DEFINITIONS = Definitions({
+    # Tile colors
+    'COL_TILE_EMPTY': Definition(
+        wx.Colour(200, 200, 200, 255), 'Empty map tile background'
+    ),
+    'COL_TILE_EDGE': Definition(
+        wx.Colour(240, 240, 240, 255), 'Map tile edge border'
+    ),
 
-        # Building colors
-        'COL_BLDG_IN': ColorDefinition(
-            (200, 200, 200, 180), 'Building interior fill'
-        ),
-        'COL_BLDG_OUT': ColorDefinition(
-            (100, 100, 100, 255), 'Building outline border'
-        ),
-        'COL_BLDG_LBL': ColorDefinition(
-            (255, 255, 255, 255), 'Building label text'
-        ),
+    # Grid colors
+    'COL_GRID': Definition(
+        wx.Colour(220, 220, 220, 255), 'Background grid lines'
+    ),
 
-        # Selected building colors
-        'COL_SEL_BLDG_IN': ColorDefinition(
-            (150, 180, 255, 180), 'Selected building interior fill'
-        ),
-        'COL_SEL_BLDG_OUT': ColorDefinition(
-            (0, 0, 255, 255), 'Selected building outline border'
-        ),
+    # Building preview colors
+    'COL_FLOAT_IN': Definition(
+        wx.Colour(100, 255, 100, 100), 'Building preview fill'
+    ),
+    'COL_FLOAT_OUT': Definition(
+        wx.Colour(0, 200, 0, 255), 'Building preview outline'
+    ),
 
-        # Handle colors
-        'COL_HANDLE_IN': ColorDefinition(
-            (255, 255, 255, 255), 'Selection handle interior'
-        ),
-        'COL_HANDLE_OUT': ColorDefinition(
-            (0, 0, 255, 255), 'Selection handle outline'
-        ),
-    }
+    # Building colors
+    'COL_BLDG_IN': Definition(
+        wx.Colour(200, 200, 200, 180), 'Building interior fill'
+    ),
+    'COL_BLDG_OUT': Definition(
+        wx.Colour(100, 100, 100, 255), 'Building outline border'
+    ),
+    'COL_BLDG_LBL': Definition(
+        wx.Colour(255, 255, 255, 255), 'Building label text'
+    ),
 
-    def __init__(self):
-        self._colors: Dict[str, wx.Colour] = {}
-        self._initialized = False
+    # Selected building colors
+    'COL_SEL_BLDG_IN': Definition(
+        wx.Colour(150, 180, 255, 180), 'Selected building interior fill'
+    ),
+    'COL_SEL_BLDG_OUT': Definition(
+        wx.Colour(0, 0, 255, 255), 'Selected building outline border'
+    ),
 
-    def _ensure_initialized(self):
-        """Ensure colors are initialized (called on first access)"""
-        if not self._initialized:
-            self._load_defaults()
-            self._initialized = True
-
-    def _load_defaults(self):
-        """Load default color values"""
-        for key, definition in self.COLOR_DEFINITIONS.items():
-            r, g, b, a = definition.default
-            self._colors[key] = wx.Colour(r, g, b, a)
-
-    def get(self, key: str) -> wx.Colour:
-        """Get a color by key"""
-        self._ensure_initialized()
-        if key not in self._colors:
-            raise KeyError(f"Color '{key}' not defined")
-        return self._colors[key]
-
-    def set(self, key: str, color: wx.Colour):
-        """Set a color by key"""
-        self._ensure_initialized()
-        if key not in self.COLOR_DEFINITIONS:
-            raise KeyError(f"Color '{key}' not defined")
-        self._colors[key] = wx.Colour(color)
-
-    def get_definition(self, key: str) -> ColorDefinition:
-        """Get color definition by key"""
-        if key not in self.COLOR_DEFINITIONS:
-            raise KeyError(f"Color '{key}' not defined")
-        return self.COLOR_DEFINITIONS[key]
-
-    def get_all_keys(self):
-        """Get all available color keys"""
-        return list(self.COLOR_DEFINITIONS.keys())
-
-    def reset_to_defaults(self):
-        """Reset all colors to default values"""
-        self._colors.clear()
-        self._initialized = False
-        self._ensure_initialized()
-
-    def reset_color_to_default(self, key: str):
-        """Reset a specific color to its default value"""
-        if key not in self.COLOR_DEFINITIONS:
-            raise KeyError(f"Color '{key}' not defined")
-        r, g, b, a = self.COLOR_DEFINITIONS[key].default
-        self._colors[key] = wx.Colour(r, g, b, a)
-
+    # Handle colors
+    'COL_HANDLE_IN': Definition(
+        wx.Colour(255, 255, 255, 255), 'Selection handle interior'
+    ),
+    'COL_HANDLE_OUT': Definition(
+        wx.Colour(0, 0, 255, 255), 'Selection handle outline'
+    ),
+})
 
 # Global color settings instance
-colorset = ColorSettings()
-settings = ParameterSettings()
+colorset = Settings(COLOR_DEFINITIONS)
+settings = Settings(PARAMETER_DEFINITIONS)
