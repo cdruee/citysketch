@@ -299,7 +299,7 @@ deploy_deb:
 deploy_pypi:
   # deploy only if a release (no ".devX" or "+"in version string):
   rules:
-    - if: $CI_COMMIT_TAG && $CI_COMMIT_TAG !~ /(\.dev|\+)/n && $PYPI_ID_TOKEN
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_TAG !~ /(\.dev|\+)/ && $PYPI_ID_TOKEN
   image: python:latest
   stage: deploy
   needs:
