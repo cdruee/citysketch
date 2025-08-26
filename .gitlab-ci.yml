@@ -244,6 +244,8 @@ deploy_deb:
   # deploy only if a release (no ".devX" or "+"in version string):
   rules:
     - if: $CI_COMMIT_TAG && $CI_COMMIT_TAG !~ /(\.dev|\+)/
+      exists:
+        - $SSH_PRIVATE_KEY
   image: ubuntu:latest
   stage: deploy
   needs:
@@ -294,17 +296,17 @@ deploy_deb:
       done
     - echo "Ende"
 
-#deploy_pypi:
-#  # deploy only if a release (no ".devX" or "+"in version string):
-#  rules:
-#    - if: $CI_COMMIT_TAG && $CI_COMMIT_TAG !~ /(\.dev|\+)/
-#  image: python:latest
-#  stage: deploy
-#  needs:
-#    - job: build_deb
-#    - job: build_sdist
-#      artifacts: true
-#  script:
-#    - pip install twine
-#    - twine check dist/*tar.gz
-#    - twine upload --repository-url https://upload.pypi.org/legacy/ --username __token__ --password $PYPI_ID_TOKEN dist/*tar.gz
+deploy_pypi:
+  # deploy only if a release (no ".devX" or "+"in version string):
+  rules:
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_TAG !~ /(\.dev|\+)/n && $PYPI_ID_TOKEN
+  image: python:latest
+  stage: deploy
+  needs:
+    - job: build_deb
+    - job: build_sdist
+      artifacts: true
+  script:
+    - pip install twine
+    - twine check dist/*tar.gz
+    - twine upload --repository-url https://upload.pypi.org/legacy/ --username __token__ --password $PYPI_ID_TOKEN dist/*tar.gz
