@@ -47,5 +47,5 @@ citysketch = ['citysketch_logo.png']
 #version = {attr = "citysketch.__version__"}
 
 [tool.setuptools_scm]
-version_file = "citysketch/_version.py"
+write_to = "citysketch/_version.py"
 
