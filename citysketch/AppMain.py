@@ -2086,11 +2086,11 @@ class MainFrame(wx.Frame):
 
             color_settings = data.get('color_settings', None)
             if color_settings:
-                colorset.from_dict()
+                colorset.from_dict(color_settings)
 
             general_settings = data.get('general_settings', None)
             if general_settings:
-                settings.from_dict()
+                settings.from_dict(general_settings)
 
             self.current_file = filepath
             self.modified = False

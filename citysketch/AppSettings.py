@@ -1,3 +1,4 @@
+import ast
 from dataclasses import dataclass
 from typing import Any, Dict, NamedTuple, Optional, Tuple, Type
 
@@ -32,7 +33,8 @@ class Settings():
     def _load_defaults(self):
         """Load default color values"""
         for key, definition in self._defaults.items():
-            self._values[key] = definition
+            self._values[key] = Definition(definition.value,
+                                           definition.description)
 
     def get(self, key: str) -> Any:
         """Get params by key"""
@@ -41,15 +43,21 @@ class Settings():
             raise KeyError(f"Parameter '{key}' not defined")
         return self._values[key].value
 
+    def get_default(self, key: str) -> Any:
+        """Get default definition by key"""
+        if key not in self._values:
+            raise KeyError(f"Parameter '{key}' not defined")
+        return self._defaults[key].value
+
     def set(self, key: str, value: Any):
         """Set params by key"""
         self._ensure_initialized()
-        if key not in self._values:
+        if key not in self._defaults:
             raise KeyError(f"Parameter '{key}' not defined")
-        if not isinstance(value, self._values[key]):
-            raise TypeError(f"Parameter '{key}' must "
-                            f"be of type {type(value)}")
-        self._values[key] = value
+        if not isinstance(value, type(self._defaults[key].value)):
+            raise TypeError(f"Parameter '{key}' must be of "
+                            f"type {type(self._defaults[key].value)}")
+        self._values[key].value = value
 
     def get_description(self, key: str) -> Definition:
         """Get color definition by key"""
@@ -63,25 +71,27 @@ class Settings():
 
     def reset_to_defaults(self):
         """Reset all params to default params"""
-        self._values.clear()
-        self._initialized = False
-        self._ensure_initialized()
+        for key in self._defaults.keys():
+            self.reset_param_to_default(key)
 
     def reset_param_to_default(self, key: str):
         """Reset a specific color to its default param"""
         if key not in self._defaults:
             raise KeyError(f"Parameter '{key}' not defined")
-        self._values[key] = self._defaults[key]
+        self.set(key, self._defaults[key].value)
 
     def from_dict(self, dictionary: Dict):
         for k, v in dictionary.items():
             if k not in self._defaults.keys():
                 raise KeyError(f"Color '{k}' not defined")
-            self.set(k, v)
+            # interpret type from string
+            value = ast.literal_eval(v)
+            # cast to actual type
+            self.set(k, type(self._defaults[k].value)(value))
         return True
 
     def to_dict(self):
-        return {x: self.get(x) for x in self.get_all_keys()}
+        return {x: str(self.get(x)) for x in self.get_all_keys()}
 
 
 PARAMETER_DEFINITIONS = Definitions({

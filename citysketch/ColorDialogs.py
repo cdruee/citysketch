@@ -7,10 +7,12 @@ class ColorPickerDialog(wx.Dialog):
     """Advanced color picker dialog with multiple input methods"""
 
     def __init__(self, parent, title="Select Color",
-                 initial_color=wx.Colour(255, 255, 255)):
+                 initial_color=wx.Colour(255, 255, 255),
+                 default_color=wx.Colour(255, 255, 255)):
         super().__init__(parent, title=title, size=(500, 600))
 
         self.color = wx.Colour(initial_color)
+        self.default = wx.Colour(default_color)
         self.updating = False  # Flag to prevent recursive updates
 
         self.create_ui()
@@ -282,7 +284,7 @@ class ColorPickerDialog(wx.Dialog):
 
     def on_reset(self, event):
         """Reset to white color"""
-        self.color = wx.Colour(255, 255, 255, 255)
+        self.color = self.default
         self.update_all_from_color()
 
     def validate_http_color(self, text: str) -> bool:
@@ -548,13 +550,14 @@ class ColorSettingsDialog(wx.Dialog):
 
     def on_color_button_clicked(self, event, key):
         """Handle color button click"""
-        definition = self.color_settings.get_description(key)
+        description = self.color_settings.get_description(key)
         current_color = self.color_settings.get(key)
+        default_color = self.color_settings.get_default(key)
 
         # Open color picker dialog
         dialog = ColorPickerDialog(self,
-                                   f"Select {definition.description}",
-                                   current_color)
+                                   f"Select {description}",
+                                   current_color, default_color)
         if dialog.ShowModal() == wx.ID_OK:
             new_color = dialog.get_color()
             self.color_settings.set(key, new_color)
