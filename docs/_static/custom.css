@@ -1,0 +1,22 @@
+/* Custom CSS for CitySketch Documentation */
+
+:root {
+    --citysketch-primary: #2E86AB;
+    --citysketch-secondary: #A23B72;
+    --citysketch-accent: #F18F01;
+}
+
+.wy-nav-side {
+    background: linear-gradient(180deg, var(--citysketch-primary) 0%, #2C3E50 100%);
+}
+
+h1 {
+    border-bottom: 3px solid var(--citysketch-primary);
+    padding-bottom: 0.5rem;
+}
+
+h2 {
+    border-bottom: 2px solid var(--citysketch-secondary);
+    padding-bottom: 0.3rem;
+    margin-top: 2rem;
+}

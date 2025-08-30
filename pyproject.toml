@@ -6,13 +6,16 @@ license = { text = "EUPL-1.2" }
 authors = [
     { name = "Clemens Drüe", email = "druee@uni-trier.de" }
 ]
-description = "A modern eddy-covariance software inspired by EC-PACK."
-keywords = ["eddy-covariance", "data-analysis", "atmospheric"]
+description = "A visual building editor with interactive building placement, basemap overlays, and real-time 3D height editing."
+keywords = ["cityjson", "gis", "building-modeling", "urban-planning", "3d-visualization"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
-    "Environment :: Console",
+    "Development Status :: 4 - Beta",
     "Environment :: X11 Applications :: GTK",
+    "Environment :: MacOS X",
+    "Environment :: Win32 (MS Windows)",
     "Intended Audience :: Science/Research",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.7",
@@ -22,19 +25,58 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: GIS"
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling"
 ]
 requires-python = ">=3.7"
 dependencies = [
-    "wx",
-    "numpy"
+    "wxpython>=4.0.0",
+    "numpy>=1.16.0"
+]
+
+[project.optional-dependencies]
+# GeoTIFF support
+geotiff = [
+    "rasterio>=1.0.0",
+    "scipy>=1.0.0"
+]
+
+# 3D visualization support
+opengl = [
+    "PyOpenGL>=3.1.0",
+    "PyOpenGL_accelerate>=3.1.0"
+]
+
+# Documentation building
+docs = [
+    "sphinx>=5.0.0,<7.0.0",
+    "sphinx-rtd-theme>=1.2.0"
+]
+
+# Development dependencies
+dev = [
+    "pytest"
+]
+
+# All optional dependencies for complete installation
+full = [
+    "citysketch[geotiff,opengl]"
+]
+all = [
+    "citysketch[geotiff,opengl,docs,dev]"
 ]
 
 [project.entry-points."gui_scripts"]
 citysketch = "citysketch.mainApp:main"
 
+[project.urls]
+Homepage = "https://pypi.gitlab.com/your-username/citysketch"
+Documentation = "https://uwm.gitlab.io/citysketch"
+Repository = "https://gitlab.uni-trier.de/uwm/austal/citysketch"
+
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=61.0", "wheel", "setuptools_scm>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -43,9 +85,10 @@ packages = ["citysketch"]
 [tool.setuptools.package-data]
 citysketch = ['citysketch_logo.png']
 
-#[tool.setuptools.dynamic]
-#version = {attr = "citysketch.__version__"}
-
 [tool.setuptools_scm]
 write_to = "citysketch/_version.py"
 
+# Documentation configuration
+[tool.sphinx]
+source-dir = "docs"
+build-dir = "build"
