@@ -2,17 +2,21 @@
 
 ===================
 
-This chapter covers all aspects of creating buildings in CitySketch, from basic rectangular structures to advanced rotated buildings with precise dimensions.
+This chapter covers all aspects of creating buildings in CitySketch,
+from basic rectangular structures to advanced rotated buildings with
+precise dimensions.
 
 Building Creation Modes
 =========================
 
-CitySketch offers two primary building creation modes, each optimized for different building types:
+CitySketch offers two primary building creation modes,
+each optimized for different building types:
 
 Block Building Mode
 --------------------
 
-**Activation**: Click "Add Block Building" button or use keyboard shortcut
+**Activation**:
+Click "Add Block Building" button or use keyboard shortcut
 
 **Best For**:
 - Rectangular buildings
@@ -21,7 +25,7 @@ Block Building Mode
 - Buildings that need rotation after creation
 
 **Creation Process**:
-1. First click sets the anchor corner (typically bottom-left)
+1. First click sets the anchor corner
 2. Mouse movement shows building preview
 3. Second click completes the building
 

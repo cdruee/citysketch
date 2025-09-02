@@ -68,7 +68,7 @@ all = [
 ]
 
 [project.entry-points."gui_scripts"]
-citysketch = "citysketch.mainApp:main"
+citysketch = "citysketch.AppMain:main"
 
 [project.urls]
 Homepage = "https://pypi.gitlab.com/your-username/citysketch"
