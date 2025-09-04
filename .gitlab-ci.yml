@@ -47,7 +47,7 @@ build_pages:
     - job: build_sdist
   script:
     - pip install setuptools importlib build
-    - pip install sphinx sphinx-argparse
+    - pip install sphinx sphinx-argparse sphinx-rtd-theme
     - pip install numpy pandas
     - python -m build --wheel
     - BUILDING_SPHINX=true sphinx-build -b html docs build/sphinx/html

@@ -92,7 +92,7 @@ Or from Python:
 
 .. code-block:: python
 
-   from citysketch.mainApp import main
+   from citysketch.AppMain import main
    main()
 
 Initial Setup
