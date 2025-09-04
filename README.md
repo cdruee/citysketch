@@ -1,6 +1,6 @@
 ### CitySketch
 
-![CitySketch logo](https://github.com/cdruee/citysketch/blob/main/logo/citysketch_logo.png)
+![CitySketch logo](https://github.com/cdruee/citysketch/raw/main/logo/citysketch_logo.png)
 
 A visual building editor for use with AUSTAL
 with interactive building placement, 
