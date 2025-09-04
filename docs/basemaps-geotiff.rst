@@ -1,16 +1,16 @@
-# Basemaps and GeoTIFF
-
+Basemaps and GeoTIFF
 ========================
 
 This chapter explains how to work with geographic reference data in CitySketch, including basemap integration and GeoTIFF overlay functionality.
 
 Understanding Basemaps
-========================
+-----------------------
 
 What are Basemaps?
-------------------
+~~~~~~~~~~~~~~~~~~~~~
 
-Basemaps provide geographic context by displaying real-world imagery or maps behind your building models. They help with:
+Basemaps provide geographic context by displaying real-world imagery
+or maps behind your building models. They help with:
 
 - **Spatial Reference**: Understanding location in the real world
 - **Building Placement**: Positioning buildings accurately  
@@ -18,7 +18,7 @@ Basemaps provide geographic context by displaying real-world imagery or maps beh
 - **Navigation**: Moving around large geographic areas
 
 Supported Basemap Providers
-----------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **None (Default)**
    Simple grid background with no geographic data.
@@ -56,11 +56,21 @@ Supported Basemap Providers
    
    *Cons*: Limited urban detail, specialized use cases
 
+**Hillshade**
+   Shading that looks like the topograpy is all white and lightened from the top left.
+
+   *Best for*: Complex tarrain, result presentation.
+
+   *Pros*: Clean looks, elevation visualization
+
+   *Cons*: No man-made references like streets or buildings, no place names
+
+
 Configuring Basemaps
-======================
+---------------------
 
 Basemap Selection Dialog
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Access through **Edit → Select Basemap** or the toolbar:
 
@@ -70,7 +80,7 @@ Access through **Edit → Select Basemap** or the toolbar:
 4. **Apply Settings**: Click OK to load new basemap
 
 Geographic Coordinates
-----------------------
+~~~~~~~~~~~~~~~~~~~~~~
 
 **Latitude and Longitude Format**:
 - Use decimal degrees (e.g., 49.4875, not 49°29'15"N)
@@ -85,7 +95,7 @@ Geographic Coordinates
 - Survey data: Convert from local coordinate systems
 
 Quick Location Presets
------------------------
+~~~~~~~~~~~~~~~~~~~~~~~
 
 The basemap dialog includes preset locations:
 
@@ -97,29 +107,21 @@ The basemap dialog includes preset locations:
 These provide starting points for common German locations. You can manually enter coordinates for any worldwide location.
 
 Working with Map Tiles
-========================
+-------------------------
 
 Tile System Overview
---------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 Basemaps use a standard "slippy map" tile system:
 
-- **Zoom Levels**: 0 (world view) to 18+ (building detail)
+- **Zoom Levels**: 0 (world view) to 18 (building detail)
 - **Tile Size**: 256×256 pixels per tile
 - **Coordinate System**: Web Mercator (EPSG:3857)
 - **Tile Servers**: HTTP/HTTPS requests to map providers
 
-Tile Loading Process
---------------------
-
-1. **Calculate Tiles**: Determine which tiles are needed for current view
-2. **Check Cache**: Look for existing tiles in memory and disk cache
-3. **Download Missing**: Request tiles from servers in background
-4. **Display**: Render tiles as they become available
-5. **Cache Storage**: Save downloaded tiles for future use
 
 Cache Management
-----------------
+~~~~~~~~~~~~~~~~~~~
 
 **Cache Locations**:
 - **Memory Cache**: Up to 100 tiles for immediate access
@@ -140,21 +142,15 @@ Cache Management
 3. Restart CitySketch to recreate cache structure
 
 Performance Considerations
-===========================
+---------------------------
 
 Basemap Performance Factors
-----------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Network Speed**: Tile download depends on internet connection
 **Zoom Level**: Higher zoom = more tiles = slower loading
 **Provider**: Satellite imagery loads slower than street maps
 **Cache State**: First visit to area is slower than subsequent visits
-
-**Optimization Strategies**:
-- Start with lower zoom levels, then zoom in as needed
-- Allow tiles to load completely before panning rapidly
-- Use "None" basemap for intensive editing sessions
-- Pre-load areas by panning slowly across the region
 
 Basemap vs. Performance Trade-offs
 -----------------------------------
@@ -172,10 +168,10 @@ Basemap vs. Performance Trade-offs
 - No geographic reference or context
 
 GeoTIFF Overlay Support
-========================
+-----------------------
 
 Understanding GeoTIFF
-----------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 GeoTIFF files are raster images with embedded geographic information:
 
@@ -211,10 +207,10 @@ pip install rasterio
 - Most coordinate reference systems
 
 GeoTIFF Display Options
-========================
+--------------------------
 
 Overlay Configuration
----------------------
+~~~~~~~~~~~~~~~~~~~~~~~
 
 Access through **Edit → GeoTIFF Settings** after loading:
 
@@ -240,26 +236,14 @@ GeoTIFF overlays render in this order:
 This ensures buildings always appear above reference data while maintaining geographic context from the basemap.
 
 Coordinate System Handling
-============================
+----------------------------
 
 Projection Support
-------------------
+~~~~~~~~~~~~~~~~~~
 
 **Preferred Coordinate Systems**:
 - **WGS84 (EPSG:4326)**: Direct compatibility, best performance
 - **Web Mercator (EPSG:3857)**: Good performance, tile system compatibility
-
-**Supported with Reprojection**:
-- UTM zones (various EPSG codes)
-- National coordinate systems
-- State plane coordinate systems
-- Custom projections defined in GDAL
-
-**Reprojection Process**:
-1. GDAL automatically detects source coordinate system
-2. Transforms coordinates to WGS84 for display
-3. May display warning for non-WGS84 systems
-4. Performance impact increases with coordinate system complexity
 
 Coordinate System Warnings
 ---------------------------
@@ -277,10 +261,10 @@ gdalwarp -t_srs EPSG:4326 input.tif output_wgs84.tif
 ```
 
 GeoTIFF Optimization
-=====================
+---------------------
 
 Preparing GeoTIFF Files
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Performance Optimization**:
 1. **Convert to WGS84**: Use gdalwarp for coordinate system conversion
@@ -323,10 +307,10 @@ Data Type Handling
 - Common with elevation models and analysis results
 
 Troubleshooting GeoTIFF Issues
-================================
+-------------------------------
 
 Loading Problems
------------------
+~~~~~~~~~~~~~~~~~
 
 **"GeoTIFF support not available"**:
 - Install rasterio: `pip install rasterio`
@@ -361,59 +345,12 @@ Display Problems
 - Verify image bounds overlap with current view
 - Try zooming to different areas to test coverage
 
-Best Practices for Geographic Data
-====================================
-
-Project Setup Workflow
------------------------
-
-1. **Define Project Area**:
-   - Determine geographic extent of project
-   - Choose appropriate center coordinates
-   - Consider coordinate system requirements
-
-2. **Select Basemap**:
-   - Choose provider based on project needs
-   - Urban areas: OpenStreetMap or Satellite
-   - Rural areas: Terrain or Satellite
-   - Performance-critical: None
-
-3. **Load Reference Data**:
-   - GeoTIFF overlays for detailed site information
-   - Ensure coordinate system compatibility
-   - Optimize files for performance
-
-4. **Configure Display**:
-   - Adjust GeoTIFF opacity for proper overlay effect
-   - Set comfortable zoom level for working
-   - Test performance with all layers enabled
-
-Data Source Recommendations
-----------------------------
-
-**Free Data Sources**:
-- OpenStreetMap exports for building footprints
-- USGS Earth Explorer for satellite imagery
-- National mapping agencies for topographic data
-- Municipal open data portals for city-specific information
-
-**Commercial Data Sources**:
-- Esri World Imagery (used by Satellite basemap)
-- Google Earth imagery (for reference only)
-- Commercial survey data for high precision
-- Specialized industry datasets
-
-**Creating Custom GeoTIFF**:
-- Export from GIS software (QGIS, ArcGIS)
-- Process drone/aerial survey data
-- Convert CAD drawings with geographic reference
-- Combine multiple data sources into composite images
 
 Integration Strategies
-=======================
+-----------------------
 
 Basemap-Driven Workflow
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Start with Basemap**:
 1. Set geographic center to project location
@@ -421,14 +358,8 @@ Basemap-Driven Workflow
 3. Navigate to precise working area
 4. Create buildings using basemap as reference
 
-**Building Placement**:
-- Trace building footprints from satellite imagery
-- Align with street networks from OpenStreetMap
-- Use terrain maps for elevation context
-- Verify positions against known landmarks
-
 GeoTIFF-Driven Workflow
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~
 
 **Start with GeoTIFF**:
 1. Load site-specific GeoTIFF overlay
@@ -436,14 +367,8 @@ GeoTIFF-Driven Workflow
 3. Adjust opacity for optimal visibility
 4. Create buildings based on detailed overlay information
 
-**Precision Placement**:
-- Use architectural drawings as overlay for exact positioning
-- Trace building outlines from high-resolution imagery
-- Match survey control points for precise georeferencing
-- Verify accuracy against field measurements
-
 Combined Approach
------------------
+~~~~~~~~~~~~~~~~~
 
 **Layered Reference System**:
 1. Basemap for general geographic context
@@ -451,84 +376,3 @@ Combined Approach
 3. Buildings for final model representation
 4. Toggle layers as needed during different work phases
 
-**Quality Control Process**:
-- Compare building positions across all reference layers
-- Verify consistency between basemap and GeoTIFF
-- Check building alignment with site features
-- Export and validate in external applications
-
-Working with Different Geographic Scales
-==========================================
-
-Urban Scale Projects
---------------------
-
-**Characteristics**:
-- High building density
-- Regular street grids
-- Multiple data sources available
-- Precise positioning requirements
-
-**Recommended Setup**:
-- Basemap: OpenStreetMap or Satellite
-- GeoTIFF: Site plans or high-resolution aerial imagery
-- Zoom levels: 16-18 for detail work
-- Snap enabled for building alignment
-
-Suburban Scale Projects
------------------------
-
-**Characteristics**:
-- Moderate building density
-- Mixed regular and irregular patterns
-- Property boundary significance
-- Residential building types
-
-**Recommended Setup**:
-- Basemap: Satellite for property boundaries
-- GeoTIFF: Property maps or surveys when available
-- Zoom levels: 14-17 for neighborhood context
-- Balance between detail and coverage
-
-Rural Scale Projects
---------------------
-
-**Characteristics**:
-- Low building density
-- Large building footprints
-- Terrain significance
-- Agricultural or industrial context
-
-**Recommended Setup**:
-- Basemap: Terrain or Satellite
-- GeoTIFF: Topographic maps or farm surveys
-- Zoom levels: 12-16 for regional context
-- Consider elevation and natural features
-
-Campus/Industrial Scale
------------------------
-
-**Characteristics**:
-- Planned layouts
-- Large building complexes
-- Infrastructure integration
-- Specialized building types
-
-**Recommended Setup**:
-- Basemap: Satellite for site context
-- GeoTIFF: Site master plans or engineering drawings
-- Zoom levels: 15-18 for facility detail
-- Precise building relationships important
-
-Next Steps
-============
-
-After mastering basemaps and GeoTIFF integration:
-
-1. Practice with :doc:`3d-visualization` to see geographic context in 3D
-2. Learn :doc:`file-formats` for exporting georeferenced data
-3. Review :doc:`troubleshooting` for solving geographic data issues
-4. Explore :doc:`technical/architecture` for advanced coordinate system details
-
-.. note::
-   Geographic accuracy is crucial for many CitySketch applications. Take time to properly configure coordinate systems and verify building positions against reference data.

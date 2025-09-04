@@ -120,10 +120,12 @@ def geo2math(rot):
 
 def save_to_austaltxt(path, lat, lon, buildings, rs='ut'):
     """Write buildings to austaltxt file"""
+
+    FMT = '{:.2f}'
     def transform(x,y):
         return x,y
     if os.path.exists(path):
-        austxt = get_austxt()
+        austxt = get_austxt(path)
     else:
         austxt = {}
 
@@ -133,13 +135,13 @@ def save_to_austaltxt(path, lat, lon, buildings, rs='ut'):
         d_uy = app_uy - austxt["uy"][0]
         dist = math.sqrt(d_ux ** 2 + d_uy ** 2)
     elif "gx" in austxt and "gy" in austxt:
-        app_gx, app_gy = ll2ut(lat, lon)
+        app_gx, app_gy = ll2gk(lat, lon)
         d_gx = app_gx - austxt["gx"][0]
         d_gy = app_gy - austxt["gy"][0]
         dist = math.sqrt(d_gx ** 2 + d_gy ** 2)
     else:
         # no preexisting center position definition
-        dist = 0
+        dist = 0.
         if rs == 'gk':
             app_gx, app_gy = ll2gk(lat, lon)
             austxt["gx"] = [app_gx]
@@ -154,7 +156,8 @@ def save_to_austaltxt(path, lat, lon, buildings, rs='ut'):
     if dist > MAX_CENTER_DISTANCE:
         raise ValueError(f"Center position "
                          f"in file {os.path.basename(path)} "
-                         f"does not match current center position.")
+                         f"does not match current center position. "
+                         f"(dist = {dist})")
 
     xy_in = [(b.x1,b.y1) for b in buildings]
     xy_out = [transform(x,y) for x,y in xy_in]
@@ -165,19 +168,19 @@ def save_to_austaltxt(path, lat, lon, buildings, rs='ut'):
 
     # convert buildings
     for i, building in enumerate(buildings):
-        austxt['xb'].append(xy_out[i][0])
-        austxt['yb'].append(xy_out[i][1])
+        austxt['xb'].append(FMT.format(xy_out[i][0]))
+        austxt['yb'].append(FMT.format(xy_out[i][1]))
         if building.a > 0:
             # block building
-            austxt['ab'].append(building.a)
-            austxt['bb'].append(building.b)
+            austxt['ab'].append(FMT.format(building.a))
+            austxt['bb'].append(FMT.format(building.b))
         else:
             # cylindical building
-            austxt['ab'].append(0.)
+            austxt['ab'].append(FMT.format(0.))
             # austal: amount of (negative) bb is diameter
             austxt['bb'].append(-2 * building.b)
-        austxt['cb'].append(building.height)
-        austxt['wb'].append(math2geo(building.rotation))
+        austxt['cb'].append(FMT.format(building.height))
+        austxt['wb'].append(FMT.format(math2geo(building.rotation)))
 
     put_austxt(austxt, path)
 

@@ -1,5 +1,5 @@
 CitySketch User Manual
-=====================================
+=======================
 
 .. image:: _static/citysketch_logo.png
    :align: center
@@ -28,17 +28,13 @@ Contents
 .. toctree::
    :maxdepth: 2
    :caption: Technical Reference
-   
-   technical/architecture
+
    technical/api-reference
-   technical/file-formats-detailed
-   technical/development
 
 .. toctree::
    :maxdepth: 1
    :caption: Appendices
-   
-   appendix/changelog
+
    appendix/license
    appendix/acknowledgments
 
@@ -46,7 +42,7 @@ Key Features
 ============
 
 * Interactive Building Creation
-* Real-time 3D Visualization  
+* Real-time 3D Visualization
 * Basemap Integration
 * GeoTIFF Overlay Support
 * CityJSON Export

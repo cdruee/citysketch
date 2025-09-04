@@ -1,14 +1,14 @@
-# 3D Visualization
-
+3D Visualization
 ==================
 
-This chapter covers CitySketch's 3D visualization capabilities, allowing you to view and export your building models in three dimensions using OpenGL rendering.
+This chapter covers CitySketch's 3D visualization capabilities,
+allowing you to view and export your building models in three dimensions using OpenGL rendering.
 
 3D View Overview
-================
+------------------
 
 3D Visualization Features
--------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 CitySketch's 3D viewer provides:
 
@@ -20,7 +20,7 @@ CitySketch's 3D viewer provides:
 - **Snapshot Export**: Save 3D views as image files
 
 System Requirements
--------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 **Required Dependencies**:
 - PyOpenGL: `pip install PyOpenGL PyOpenGL_accelerate`
@@ -34,10 +34,10 @@ System Requirements
 - Windows DirectX 9.0c+ / Linux OpenGL 2.1+ / macOS OpenGL 2.1+
 
 Accessing 3D View
-=================
+--------------------
 
 Opening the 3D Viewer
----------------------
+~~~~~~~~~~~~~~~~~~~~~~~
 
 **Methods to Open**:
 1. **Keyboard Shortcut**: Press F3
@@ -55,10 +55,10 @@ Opening the 3D Viewer
 - Must be closed to continue 2D editing
 
 3D View Interface
-=================
+------------------
 
 Window Layout
--------------
+~~~~~~~~~~~~~~~
 
 **Main Components**:
 - **3D Viewport**: Large OpenGL rendering area
@@ -70,7 +70,7 @@ Window Layout
 - **Close**: Returns to 2D editing interface
 
 Display Elements
-----------------
+~~~~~~~~~~~~~~~~~
 
 **Buildings**:
 - **Selected Buildings**: Solid blue rendering with faces and edges
@@ -88,10 +88,10 @@ Display Elements
 - Optimized for clarity rather than realism
 
 3D Navigation Controls
-======================
+------------------------
 
 Mouse Controls
---------------
+~~~~~~~~~~~~~~~~
 
 **Camera Rotation**:
 - **Left Click + Drag**: Rotate view around buildings
@@ -106,7 +106,7 @@ Mouse Controls
 - **Center Point**: Automatically calculated from building positions
 
 Camera System
--------------
+~~~~~~~~~~~~~~~
 
 **Spherical Coordinates**:
 - Camera orbits around a center point using spherical coordinates
@@ -124,28 +124,9 @@ Camera System
 - Maximum distance provides wide-area context
 - Elevation limits prevent camera inversion
 
-Building Rendering
-==================
-
-3D Geometry Generation
-----------------------
-
-**Extrusion Process**:
-1. Take 2D building footprint (rotated rectangle)
-2. Calculate corner positions in 3D space
-3. Create bottom face at ground level (Z=0)
-4. Create top face at building height
-5. Connect corners with vertical side faces
-6. Generate face triangulation for OpenGL
-
-**Coordinate Conversion**:
-- 2D world coordinates become X,Y in 3D
-- Building height becomes Z coordinate
-- Rotation preserved in 3D representation
-- All measurements remain in meters
 
 Rendering Modes
----------------
+~~~~~~~~~~~~~~~~~~~
 
 **Selected Buildings (Solid)**:
 - Full 3D volume rendering with faces
@@ -166,10 +147,10 @@ Rendering Modes
 - Same blue color scheme throughout
 
 Visual Quality Settings
-=======================
+-----------------------
 
 Rendering Quality
------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 **OpenGL Settings**:
 - Depth testing enabled for proper occlusion
@@ -190,10 +171,10 @@ Rendering Quality
 - Light gray background for contrast
 
 Snapshot Export
-===============
+-----------------
 
 Saving 3D Images
-----------------
+~~~~~~~~~~~~~~~~~~
 
 **Export Process**:
 1. Position 3D view as desired using mouse controls
@@ -212,73 +193,12 @@ Saving 3D Images
 - No compression artifacts with PNG format
 - Suitable for presentations and documentation
 
-Export Quality Considerations
------------------------------
-
-**Maximizing Image Quality**:
-1. Resize 3D window to desired output resolution
-2. Position camera for best viewing angle
-3. Ensure all desired buildings are visible
-4. Use PNG format for highest quality
-5. Check image opens correctly after saving
-
-**Typical Use Cases**:
-- Project presentations and reports
-- Documentation of building layouts
-- Stakeholder communications
-- Design review materials
-
-3D View Limitations
-===================
-
-Current Limitations
--------------------
-
-**Rendering Limitations**:
-- Simple geometric shapes only (no architectural details)
-- No texture mapping or material properties
-- Simplified lighting (no shadows or reflections)
-- No terrain or landscape features
-
-**Interactive Limitations**:
-- Read-only view (no editing in 3D)
-- Cannot select or modify buildings in 3D
-- No measurement tools in 3D space
-- No cross-sections or cutaway views
-
-**Export Limitations**:
-- Image export only (no 3D model formats)
-- Single viewpoint per export
-- No animation or video export
-- Resolution limited by window size
-
-Performance Considerations
-==========================
-
-Optimizing 3D Performance
--------------------------
-
-**For Better Performance**:
-- Close unnecessary applications to free GPU memory
-- Update graphics drivers to latest versions
-- Work with smaller building selections when possible
-- Reduce window size if frame rate is poor
-
-**Performance Indicators**:
-- Smooth rotation and zooming indicate good performance
-- Stuttering or delays suggest performance issues
-- Very slow opening indicates graphics compatibility problems
-
-**Hardware Recommendations**:
-- Dedicated graphics card preferred over integrated
-- At least 1GB graphics memory for large projects
-- Recent OpenGL driver support (last 5 years)
 
 Troubleshooting 3D Issues
-=========================
+---------------------------
 
 Common 3D Problems
-------------------
+~~~~~~~~~~~~~~~~~~~~
 
 **3D Window Won't Open**:
 - Check PyOpenGL installation: `pip install PyOpenGL`
@@ -298,99 +218,3 @@ Common 3D Problems
 - Image appears black: OpenGL framebuffer read error
 - Wrong resolution: Resize window before taking snapshot
 
-Advanced 3D Features
-====================
-
-Camera Positioning Tips
------------------------
-
-**Effective Viewing Angles**:
-- **45° elevation**: Good balance showing tops and sides of buildings
-- **30° elevation**: More side detail, less roof area
-- **60° elevation**: Emphasizes roof shapes and overall layout
-- **Multiple angles**: Take snapshots from different viewpoints
-
-**Composition Guidelines**:
-- Position important buildings prominently in view
-- Use ground plane grid for scale reference
-- Consider background contrast for building visibility
-- Frame view to show building relationships
-
-Understanding Building Representation
--------------------------------------
-
-**Height Accuracy**:
-- 3D heights exactly match 2D height settings
-- Story count visible through proportional height
-- Useful for verifying height assumptions
-- Helps identify unrealistic building proportions
-
-**Geometric Accuracy**:
-- Footprint shapes exactly match 2D drawings
-- Rotation angles preserved in 3D space
-- Building positions maintain precise relationships
-- Scale reference helps verify real-world dimensions
-
-Integration with 2D Workflow
-============================
-
-3D as Design Validation
------------------------
-
-**Design Review Process**:
-1. Create buildings in 2D interface
-2. Periodically check 3D view for overall appearance
-3. Identify proportion or height issues
-4. Return to 2D for corrections
-5. Export 3D snapshots for documentation
-
-**Quality Assurance**:
-- 3D view reveals proportion problems not obvious in 2D
-- Height relationships become clear in 3D context
-- Building density and spacing easier to evaluate
-- Overall project scale more apparent
-
-3D for Communication
---------------------
-
-**Stakeholder Presentations**:
-- 3D images more intuitive than 2D plans
-- Shows massing and overall development impact
-- Helps non-technical audiences understand projects
-- Supports zoning and planning discussions
-
-**Technical Documentation**:
-- 3D views complement 2D drawings in reports
-- Multiple angles show different aspects
-- Before/after comparisons for development projects
-- Integration with other visualization tools
-
-Future 3D Enhancements
-======================
-
-Planned Improvements
---------------------
-
-While current 3D capabilities focus on core visualization needs, potential future enhancements could include:
-
-- **Advanced Materials**: Texture mapping and material properties
-- **Improved Lighting**: Shadow casting and realistic lighting
-- **Animation Support**: Camera path animation and flythrough videos
-- **Enhanced Export**: 3D model formats (OBJ, PLY, etc.)
-- **Measurement Tools**: Distance and area measurement in 3D space
-
-**Current Alternatives**:
-For advanced 3D features, consider exporting to CityJSON format and importing into specialized 3D applications like Blender or professional GIS software.
-
-Next Steps
-==========
-
-After mastering 3D visualization:
-
-1. Practice taking effective snapshots for different purposes
-2. Integrate 3D review into your building creation workflow  
-3. Learn :doc:`file-formats` for exporting 3D-compatible data
-4. Explore :doc:`technical/architecture` for understanding 3D rendering pipeline
-
-.. note::
-   The 3D view is designed as a visualization and validation tool rather than a full 3D modeling environment. It excels at showing spatial relationships and overall project context.

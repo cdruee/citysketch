@@ -711,6 +711,8 @@ class MapCanvas(wx.Panel):
             servers = ['a', 'b', 'c']
             server = servers[abs(hash((x, y))) % len(servers)]
             return f"https://{server}.tile.opentopomap.org/{z}/{x}/{y}.png"
+        elif provider == MapProvider.HILLSHADE:
+            return f"http://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}"
         return None
 
     def load_tile_async(self, provider, z, x, y):

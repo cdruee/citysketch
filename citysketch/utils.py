@@ -75,3 +75,4 @@ class MapProvider(Enum):
     OSM = "OpenStreetMap"
     SATELLITE = "Satellite"
     TERRAIN = "Terrain"
+    HILLSHADE = "Hillshade"
