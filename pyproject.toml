@@ -71,9 +71,8 @@ all = [
 citysketch = "citysketch.AppMain:main"
 
 [project.urls]
-Homepage = "https://pypi.gitlab.com/your-username/citysketch"
-Documentation = "https://uwm.gitlab.io/citysketch"
-Repository = "https://gitlab.uni-trier.de/uwm/austal/citysketch"
+Documentation = "https://uwm.gitlab-pages.uni-trier.de/austal/citysketch/"
+Repository = "https://github.com/cdruee/citysketch"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel", "setuptools_scm>=6.2"]
