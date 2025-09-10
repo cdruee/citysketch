@@ -1552,6 +1552,7 @@ class MainFrame(wx.Frame):
                          size=(1200, 800))
 
         self.current_file = None
+        self.current_directory = os.getcwd()
         self.modified = False
 
         # Create UI
@@ -1958,12 +1959,14 @@ class MainFrame(wx.Frame):
         dialog = wx.FileDialog(
             self,
             "Open CitySketch project",
+            defaultDir=self.current_directory,
             wildcard=f"CitySketch files (*{FEXT})|*{FEXT}|All files (*.*)|*.*",
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
         )
 
         if dialog.ShowModal() == wx.ID_OK:
             filepath = dialog.GetPath()
+            self.current_directory = os.path.dirname(filepath)
             self.load_project(filepath)
         dialog.Destroy()
 
@@ -1979,6 +1982,7 @@ class MainFrame(wx.Frame):
         dialog = wx.FileDialog(
             self,
             "Open AUSTAL settings file",
+            defaultDir=self.current_directory,
             defaultFile="austal.txt",
             wildcard=f"AUSTAL files (austal.txt)|austal.txt",
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
@@ -1986,6 +1990,7 @@ class MainFrame(wx.Frame):
 
         if dialog.ShowModal() == wx.ID_OK:
             filepath = dialog.GetPath()
+            self.current_directory = os.path.dirname(filepath)
             self.load_austal(filepath)
         dialog.Destroy()
 
@@ -1994,6 +1999,7 @@ class MainFrame(wx.Frame):
         dialog = wx.FileDialog(
             self,
             "Export to AUSTAL settings file",
+            defaultDir=self.current_directory,
             defaultFile="austal.txt",
             wildcard=f"AUSTAL files (austal.txt)|austal.txt",
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
@@ -2001,6 +2007,7 @@ class MainFrame(wx.Frame):
 
         if dialog.ShowModal() == wx.ID_OK:
             filepath = dialog.GetPath()
+            self.current_directory = os.path.dirname(filepath)
             self.save_austal(filepath)
         dialog.Destroy()
 
@@ -2009,6 +2016,7 @@ class MainFrame(wx.Frame):
         dialog = wx.FileDialog(
             self,
             "Open CityJSON file",
+            defaultDir=self.current_directory,
             wildcard=f"CityJSON files (*{FEXT})|*{FEXT}"
                      f"|All files (*.*)|*.*",
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
@@ -2016,6 +2024,7 @@ class MainFrame(wx.Frame):
 
         if dialog.ShowModal() == wx.ID_OK:
             filepath = dialog.GetPath()
+            self.current_directory = os.path.dirname(filepath)
             self.load_cityjson(filepath)
         dialog.Destroy()
 
@@ -2031,6 +2040,7 @@ class MainFrame(wx.Frame):
         dialog = wx.FileDialog(
             self,
             "Save CitySketch file",
+            defaultDir=self.current_directory,
             wildcard=f"CitySketch files (*{FEXT})|*{FEXT}",
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
         )
@@ -2039,6 +2049,7 @@ class MainFrame(wx.Frame):
             filepath = dialog.GetPath()
             if not filepath.endswith(FEXT):
                 filepath += FEXT
+            self.current_directory = os.path.dirname(filepath)
             self.save_project(filepath)
         dialog.Destroy()
 
@@ -2204,12 +2215,14 @@ class MainFrame(wx.Frame):
         dialog = wx.FileDialog(
             self,
             "Load GeoTIFF file",
+            defaultDir=self.current_directory,
             wildcard="GeoTIFF files (*.tif;*.tiff)|*.tif;*.tiff|All files (*.*)|*.*",
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
         )
 
         if dialog.ShowModal() == wx.ID_OK:
             filepath = dialog.GetPath()
+            self.current_directory = os.path.dirname(filepath)
 
             # Show progress dialog for large files
             progress = wx.ProgressDialog("Loading GeoTIFF",
@@ -2436,12 +2449,14 @@ class MainFrame(wx.Frame):
         dialog = wx.FileDialog(
             self,
             "Load GeoTIFF file",
+            defaultDir=self.current_directory,
             wildcard="GeoTIFF files (*.tif;*.tiff)|*.tif;*.tiff|All files (*.*)|*.*",
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
         )
 
         if dialog.ShowModal() == wx.ID_OK:
             filepath = dialog.GetPath()
+            self.current_directory = os.path.dirname(filepath)
 
             # Show progress dialog for large files
             progress = wx.ProgressDialog("Loading GeoTIFF",
