@@ -9,7 +9,7 @@ except ImportError:
     # Python < 3.8
     from importlib_metadata import metadata, version
 
-__title__ = "austaltools"
+__title__ = "citysketch "
 
 year = datetime.now().year
 __copyright__ = f'(C) 2022-{year} Clemens Drüe'
