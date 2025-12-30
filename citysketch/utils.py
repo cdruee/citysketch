@@ -70,6 +70,24 @@ def get_location_with_fallback():
         return (49.74795,6.67412)
 
 
+def lat_lon_to_web_mercator(lat, lon):
+    """Convert latitude/longitude to Web Mercator coordinates (EPSG:3857)"""
+    import math
+
+    # Constants for Web Mercator projection
+    R = 6378137.0  # Earth radius in meters
+
+    # Convert to radians
+    lat_rad = math.radians(lat)
+    lon_rad = math.radians(lon)
+
+    # Calculate Web Mercator coordinates
+    x = R * lon_rad
+    y = R * math.log(math.tan(math.pi / 4 + lat_rad / 2))
+
+    return x, y
+
+
 class MapProvider(Enum):
     NONE = "None"
     OSM = "OpenStreetMap"

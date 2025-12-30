@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import time
 import threading
 import urllib.parse
 import urllib.request
@@ -33,15 +34,17 @@ except ImportError:
     print("Warning: GeoTIFF support not available. "
           "Install rasterio for full functionality.")
 
+from ._version import __version__, __version_tuple__
 from .AppDialogs import (AboutDialog, HeightDialog,
                         BasemapDialog, GeoTiffDialog)
 from .App3dview import OPENGL_SUPPORT, Building3DViewer
-from .Building import Building, BuildingGroup
 from .AppSettings import colorset, settings
+from .Building import Building, BuildingGroup
 from .ColorDialogs import ColorSettingsDialog
+from .GeoJSON import GeoJsonBuilding, BuildingMerger
 from .austaltxt import load_from_austaltxt, save_to_austaltxt
-from .utils import MapProvider, get_location_with_fallback
-from ._version import __version__, __version_tuple__
+from .utils import (MapProvider, get_location_with_fallback,
+                    lat_lon_to_web_mercator)
 
 APP_NAME = "CitySketch"
 APP_VERSION = __version__
@@ -67,59 +70,6 @@ class SelectMode(Enum):
     ADD_ROTUNDA = "add_rotunda"
     RECTANGLE_SELECT = "rectangle_select"
 
-# =========================================================================
-
-# Add after the existing imports
-class GeoJsonBuilding:
-    """Temporary building from GeoJSON for preview"""
-    def __init__(self, coordinates, height, feature_id):
-        self.coordinates = coordinates  # List of (x, y) tuples
-        self.height = height
-        self.feature_id = feature_id
-        self.selected = False  # Green when True, red when False
-        self.imported = False
-
-    def contains_point(self, x: float, y: float) -> bool:
-        """Check if a point is inside the polygon using ray casting"""
-        n = len(self.coordinates)
-        inside = False
-        j = n - 1
-        for i in range(n):
-            xi, yi = self.coordinates[i]
-            xj, yj = self.coordinates[j]
-            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
-                inside = not inside
-            j = i
-        return inside
-
-    def intersects_rect(self, x1, y1, x2, y2):
-        """Check if polygon intersects with rectangle"""
-        # Simple check: if any vertex is inside rect or center is inside
-        for x, y in self.coordinates:
-            if x1 <= x <= x2 and y1 <= y <= y2:
-                return True
-        # Check if rect center is inside polygon
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-        return self.contains_point(cx, cy)
-
-    def to_building(self) -> Building:
-        """Convert to a regular Building object"""
-        # Get bounding box
-        xs = [c[0] for c in self.coordinates]
-        ys = [c[1] for c in self.coordinates]
-
-        building = Building(
-            id=f"geojson_{self.feature_id}",
-            x1=min(xs),
-            y1=min(ys),
-            x2=max(xs),
-            y2=max(ys),
-            height=self.height,
-            stories=max(1, round(self.height / 3.3))  # Estimate stories
-        )
-        # Store original polygon for better representation if needed
-        building.polygon_coords = self.coordinates
-        return building
 
 # =========================================================================
 
@@ -862,6 +812,8 @@ class MapCanvas(wx.Panel):
 
     def load_geojson_files(self, filepaths):
         """Load buildings from GeoJSON files"""
+        from GeoJSON import GeoJsonBuilding
+
         self.geojson_buildings = []
         self.geojson_files = filepaths
 
@@ -870,21 +822,45 @@ class MapCanvas(wx.Panel):
         view_x1, view_y1 = self.screen_to_world(0, 0)
         view_x2, view_y2 = self.screen_to_world(width, height)
 
+        # Ensure view bounds are properly ordered
+        if view_x1 > view_x2:
+            view_x1, view_x2 = view_x2, view_x1
+        if view_y1 > view_y2:
+            view_y1, view_y2 = view_y2, view_y1
+
         # Track bounds of loaded data
         min_x, min_y = float('inf'), float('inf')
         max_x, max_y = float('-inf'), float('-inf')
 
+        loaded_count = 0
+        skipped_count = 0
+
         for filepath in filepaths:
             try:
-                with open(filepath, 'r') as f:
+                with open(filepath, 'r', encoding='utf-8') as f:
                     data = json.load(f)
 
                 if data.get('type') != 'FeatureCollection':
+                    print(f"Skipping {filepath}: Not a FeatureCollection")
                     continue
 
                 # Check CRS - handle EPSG:3857 (Web Mercator)
                 crs = data.get('crs', {})
-                is_web_mercator = 'EPSG::3857' in str(crs)
+                crs_str = str(crs)
+                is_web_mercator = 'EPSG::3857' in crs_str or '3857' in crs_str
+
+                # Determine offset based on map center if using Web Mercator
+                offset_x = 0
+                offset_y = 0
+                if is_web_mercator and self.map_provider != MapProvider.NONE:
+                    # Convert map center to Web Mercator for offset calculation
+                    # This is approximate - you may need to adjust based on your data
+                    center_x, center_y = lat_lon_to_web_mercator(
+                        self.geo_center_lat, self.geo_center_lon
+                    )
+                    # Round to nearest major grid line for cleaner offsets
+                    offset_x = round(center_x / 100000) * 100000
+                    offset_y = round(center_y / 100000) * 100000
 
                 for feature in data.get('features', []):
                     if feature.get('type') != 'Feature':
@@ -893,56 +869,120 @@ class MapCanvas(wx.Panel):
                     props = feature.get('properties', {})
                     geom = feature.get('geometry', {})
 
-                    if geom.get('type') != 'Polygon':
+                    if geom.get('type') not in ['Polygon', 'MultiPolygon']:
                         continue
 
-                    # Get coordinates (first ring only for now)
-                    coords = geom.get('coordinates', [[]])[0]
-                    if len(coords) < 3:
-                        continue
+                    # Handle both Polygon and MultiPolygon
+                    if geom.get('type') == 'Polygon':
+                        polygon_coords_list = [
+                            geom.get('coordinates', [[]])[0]]
+                    else:  # MultiPolygon
+                        polygon_coords_list = [poly[0] for poly in
+                                               geom.get('coordinates', [])]
 
-                    # Convert coordinates if needed
-                    building_coords = []
-                    for coord in coords[
-                        :-1]:  # Skip last (duplicate of first)
-                        x, y = coord[0], coord[1]
+                    for polygon_coords in polygon_coords_list:
+                        if len(polygon_coords) < 3:
+                            continue
 
-                        # If Web Mercator, convert to local coordinates
-                        # For now, use as-is but offset to reasonable values
-                        if is_web_mercator:
-                            # Simple offset to center around origin
-                            x = x - 690000  # Adjust based on your data
-                            y = y - 5740000
+                        # Convert coordinates
+                        building_coords = []
+                        for coord in polygon_coords[
+                            :-1]:  # Skip last (duplicate of first)
+                            if len(coord) < 2:
+                                continue
 
-                        building_coords.append((x, y))
-                        min_x = min(min_x, x)
-                        max_x = max(max_x, x)
-                        min_y = min(min_y, y)
-                        max_y = max(max_y, y)
+                            x, y = coord[0], coord[1]
 
-                    # Check if building intersects view
-                    if self.polygon_intersects_view(building_coords,
-                                                    view_x1, view_y1,
-                                                    view_x2, view_y2):
-                        # Check if identical to existing building
-                        if not self.is_duplicate_building(building_coords,
-                                                          props.get(
-                                                                  'height',
-                                                                  10)):
-                            geojson_building = GeoJsonBuilding(
-                                building_coords,
-                                props.get('height', 10),
-                                props.get('id', str(uuid.uuid4()))
-                            )
-                            self.geojson_buildings.append(geojson_building)
+                            # Apply offset for Web Mercator
+                            if is_web_mercator:
+                                x = x - offset_x
+                                y = y - offset_y
+                                # Scale down for more manageable coordinates
+                                x = x / 100  # Adjust scale as needed
+                                y = y / 100
 
+                            building_coords.append((x, y))
+                            min_x = min(min_x, x)
+                            max_x = max(max_x, x)
+                            min_y = min(min_y, y)
+                            max_y = max(max_y, y)
+
+                        # Skip if not enough coordinates
+                        if len(building_coords) < 3:
+                            continue
+
+                        # Check if building intersects view
+                        if self.polygon_intersects_view(building_coords,
+                                                        view_x1, view_y1,
+                                                        view_x2, view_y2):
+                            # Check if identical to existing building
+                            height = float(props.get('height', 10.0))
+
+                            if not self.is_duplicate_building(
+                                    building_coords, height):
+                                # Get building ID from properties
+                                building_id = str(props.get('id',
+                                                            props.get(
+                                                                'osm_id',
+                                                                str(uuid.uuid4()))))
+
+                                geojson_building = GeoJsonBuilding(
+                                    coordinates=building_coords,
+                                    height=height,
+                                    feature_id=building_id
+                                )
+
+                                # Add additional properties if needed
+                                if 'var' in props:
+                                    geojson_building.height_variance = float(
+                                        props['var'])
+                                if 'region' in props:
+                                    geojson_building.region = props[
+                                        'region']
+                                if 'source' in props:
+                                    geojson_building.source = props[
+                                        'source']
+
+                                self.geojson_buildings.append(
+                                    geojson_building)
+                                loaded_count += 1
+                            else:
+                                skipped_count += 1
+
+            except FileNotFoundError:
+                wx.MessageBox(f"File not found: {filepath}", "Error",
+                              wx.OK | wx.ICON_ERROR)
+            except json.JSONDecodeError as e:
+                wx.MessageBox(f"Invalid JSON in {filepath}: {str(e)}",
+                              "Error", wx.OK | wx.ICON_ERROR)
             except Exception as e:
                 print(f"Error loading {filepath}: {e}")
+                wx.MessageBox(f"Error loading {filepath}: {str(e)}",
+                              "Error", wx.OK | wx.ICON_ERROR)
 
-        self.geojson_bounds = (min_x, min_y, max_x, max_y)
-        self.geojson_mode = 'show'
-        self.parent.geojson_btn.Enable()
-        self.parent.geojson_btn.SetLabel("GeoJSON: Import")
+        # Store bounds for later reference
+        if min_x != float('inf'):
+            self.geojson_bounds = (min_x, min_y, max_x, max_y)
+        else:
+            self.geojson_bounds = None
+
+        # Update UI state
+        if self.geojson_buildings:
+            self.geojson_mode = 'show'
+            self.parent.parent.geojson_btn.Enable()
+            self.parent.parent.geojson_btn.SetLabel("GeoJSON: Import")
+            msg = f"Loaded {loaded_count} buildings from GeoJSON"
+            if skipped_count > 0:
+                msg += f" ({skipped_count} duplicates skipped)"
+            self.parent.parent.SetStatusText(msg)
+        else:
+            self.geojson_mode = 'none'
+            self.parent.parent.geojson_btn.SetLabel("GeoJSON: None")
+            self.parent.parent.geojson_btn.Disable()
+            wx.MessageBox("No buildings found in view area",
+                          "No Buildings",
+                          wx.OK | wx.ICON_INFORMATION)
+
         self.Refresh()
 
     def polygon_intersects_view(self, coords, x1, y1, x2, y2):
@@ -950,6 +990,18 @@ class MapCanvas(wx.Panel):
         # Check if any vertex is in view
         for x, y in coords:
             if x1 <= x <= x2 and y1 <= y <= y2:
+                return True
+
+        # Check if polygon bounding box intersects view
+        if coords:
+            poly_x_min = min(c[0] for c in coords)
+            poly_x_max = max(c[0] for c in coords)
+            poly_y_min = min(c[1] for c in coords)
+            poly_y_max = max(c[1] for c in coords)
+
+            # Check for intersection
+            if not (poly_x_max < x1 or poly_x_min > x2 or
+                    poly_y_max < y1 or poly_y_min > y2):
                 return True
 
         # Check if view center is in polygon
@@ -964,24 +1016,31 @@ class MapCanvas(wx.Panel):
                     cx < (xj - xi) * (cy - yi) / (yj - yi) + xi):
                 inside = not inside
             j = i
+
         return inside
 
     def is_duplicate_building(self, coords, height):
         """Check if building already exists in project"""
-        # Simple check based on bounding box and height
+        # Calculate bounding box
         xs = [c[0] for c in coords]
         ys = [c[1] for c in coords]
         x1, y1 = min(xs), min(ys)
         x2, y2 = max(xs), max(ys)
 
+        tolerance = 0.5  # meters
+        height_tolerance = 0.5  # meters
+
         for building in self.buildings:
-            if (abs(building.x1 - x1) < 0.1 and abs(
-                    building.y1 - y1) < 0.1 and
-                    abs(building.x2 - x2) < 0.1 and abs(
-                        building.y2 - y2) < 0.1 and
-                    abs(building.height - height) < 0.1):
+            # Check bounding box similarity
+            if (abs(building.x1 - x1) < tolerance and
+                    abs(building.y1 - y1) < tolerance and
+                    abs(building.x2 - x2) < tolerance and
+                    abs(building.y2 - y2) < tolerance and
+                    abs(building.height - height) < height_tolerance):
                 return True
+
         return False
+
 
     def import_selected_geojson(self):
         """Import selected buildings with progress dialog
@@ -1045,6 +1104,62 @@ class MapCanvas(wx.Panel):
         self.Refresh()
 
         return len(imported)
+
+    def export_selected_to_geojson(self):
+        """Export selected CitySketch buildings to GeoJSON format"""
+        selected = [b for b in self.buildings if b.selected]
+
+        if not selected:
+            wx.MessageBox("No buildings selected for export",
+                          "No Selection",
+                          wx.OK | wx.ICON_WARNING)
+            return
+
+        # Try to merge buildings
+        merged = BuildingMerger.merge_buildings_to_geojson(selected)
+
+        if merged:
+            # Save as GeoJSON
+            dialog = wx.FileDialog(
+                self.parent,
+                "Save GeoJSON file",
+                wildcard="GeoJSON files (*.geojson)|*.geojson",
+                style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
+            )
+
+            if dialog.ShowModal() == wx.ID_OK:
+                filepath = dialog.GetPath()
+                if not filepath.endswith('.geojson'):
+                    filepath += '.geojson'
+
+                # Create GeoJSON structure
+                geojson = {
+                    "type": "FeatureCollection",
+                    "features": [{
+                        "type": "Feature",
+                        "properties": {
+                            "height": merged.height,
+                            "id": merged.feature_id
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [merged.coordinates + [
+                                merged.coordinates[0]]]
+                        }
+                    }]
+                }
+
+                with open(filepath, 'w') as f:
+                    json.dump(geojson, f, indent=2)
+
+                self.parent.SetStatusText(f"Exported to {filepath}")
+
+            dialog.Destroy()
+        else:
+            wx.MessageBox("Selected buildings cannot be merged\n"
+                          "(not connected or heights differ by more than 10%)",
+                          "Cannot Merge",
+                          wx.OK | wx.ICON_WARNING)
 
 
     def toggle_geojson_display(self):
