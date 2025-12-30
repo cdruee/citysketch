@@ -10,6 +10,8 @@ from typing import List, Tuple, Optional, Set
 from dataclasses import dataclass
 import numpy as np
 
+from .Building import Building
+
 # Module constants
 HEIGHT_TOLERANCE = 0.10  # 10% tolerance for height matching
 ANGLE_TOLERANCE = 15.0  # degrees for rectangle detection
@@ -24,6 +26,10 @@ class GeoJsonBuilding:
     feature_id: str
     selected: bool = False  # Green when True, red when False
     imported: bool = False
+    # Optional properties that may be set from GeoJSON
+    height_variance: Optional[float] = None
+    region: Optional[str] = None
+    source: Optional[str] = None
 
     def contains_point(self, x: float, y: float) -> bool:
         """Check if a point is inside the polygon using ray casting"""
@@ -51,7 +57,7 @@ class GeoJsonBuilding:
 
     def to_buildings(self, storey_height: float = 3.3):
         """Convert to one or more regular Building objects by fitting rectangles"""
-        from Building import Building
+
 
         buildings = []
         rectangles = RectangleFitter.fit_multiple_rectangles(
@@ -94,6 +100,18 @@ class GeoJsonBuilding:
             buildings.append(building)
 
         return buildings
+
+    def to_building(self, storey_height: float = 3.3):
+        """Convert to a single Building object (returns first fitted rectangle).
+        
+        This is a convenience method for cases where only one building is needed.
+        For complex polygons that may decompose into multiple buildings, use to_buildings().
+        
+        Returns:
+            Building: The first building from the fitted rectangles, or None if fitting fails.
+        """
+        buildings = self.to_buildings(storey_height)
+        return buildings[0] if buildings else None
 
 
 class RectangleFitter:

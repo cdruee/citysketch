@@ -812,7 +812,7 @@ class MapCanvas(wx.Panel):
 
     def load_geojson_files(self, filepaths):
         """Load buildings from GeoJSON files"""
-        from GeoJSON import GeoJsonBuilding
+        # Note: GeoJsonBuilding is already imported at module level
 
         self.geojson_buildings = []
         self.geojson_files = filepaths
