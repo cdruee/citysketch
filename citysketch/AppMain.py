@@ -10,13 +10,15 @@ import io
 import json
 import math
 import os
+from pathlib import Path
+import re
 import sys
 import tempfile
 import threading
 import urllib.parse
 import urllib.request
 import uuid
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, cast
 
 import numpy as np
 import wx
@@ -43,8 +45,7 @@ from ._version import __version__, __version_tuple__
 
 APP_NAME = "CitySketch"
 APP_VERSION = __version__
-APP_MINOR = '.'.join(str(x) for x in __version_tuple__[0:2])
-
+APP_MINOR = '.'.join(str(x) for x in cast(Tuple, __version_tuple__)[0:2])
 FEXT = '.csp'
 
 print(f"Starting {APP_NAME} {APP_MINOR} (v{APP_VERSION})")
@@ -65,6 +66,60 @@ class SelectMode(Enum):
     ADD_BUILDING = "add_building"
     ADD_ROTUNDA = "add_rotunda"
     RECTANGLE_SELECT = "rectangle_select"
+
+# =========================================================================
+
+# Add after the existing imports
+class GeoJsonBuilding:
+    """Temporary building from GeoJSON for preview"""
+    def __init__(self, coordinates, height, feature_id):
+        self.coordinates = coordinates  # List of (x, y) tuples
+        self.height = height
+        self.feature_id = feature_id
+        self.selected = False  # Green when True, red when False
+        self.imported = False
+
+    def contains_point(self, x: float, y: float) -> bool:
+        """Check if a point is inside the polygon using ray casting"""
+        n = len(self.coordinates)
+        inside = False
+        j = n - 1
+        for i in range(n):
+            xi, yi = self.coordinates[i]
+            xj, yj = self.coordinates[j]
+            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+                inside = not inside
+            j = i
+        return inside
+
+    def intersects_rect(self, x1, y1, x2, y2):
+        """Check if polygon intersects with rectangle"""
+        # Simple check: if any vertex is inside rect or center is inside
+        for x, y in self.coordinates:
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return True
+        # Check if rect center is inside polygon
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        return self.contains_point(cx, cy)
+
+    def to_building(self) -> Building:
+        """Convert to a regular Building object"""
+        # Get bounding box
+        xs = [c[0] for c in self.coordinates]
+        ys = [c[1] for c in self.coordinates]
+
+        building = Building(
+            id=f"geojson_{self.feature_id}",
+            x1=min(xs),
+            y1=min(ys),
+            x2=max(xs),
+            y2=max(ys),
+            height=self.height,
+            stories=max(1, round(self.height / 3.3))  # Estimate stories
+        )
+        # Store original polygon for better representation if needed
+        building.polygon_coords = self.coordinates
+        return building
 
 # =========================================================================
 
@@ -593,6 +648,12 @@ class MapCanvas(wx.Panel):
         # GeoTIFF layer - ADD THIS
         self.geotiff_layer = GeoTiffLayer()
 
+        # Add GeoJSON state
+        self.geojson_buildings = []  # List of GeoJsonBuilding objects
+        self.geojson_files = []  # List of loaded file paths
+        self.geojson_bounds = None  # (min_x, min_y, max_x, max_y) of loaded area
+        self.geojson_mode = 'none'  # 'none', 'show', 'hidden'
+
         # Geographic coordinates (center of view)
         lat, lon = get_location_with_fallback()  # user IP location
         self.geo_center_lat = lat
@@ -799,6 +860,252 @@ class MapCanvas(wx.Panel):
 
         return lat, lon
 
+    def load_geojson_files(self, filepaths):
+        """Load buildings from GeoJSON files"""
+        self.geojson_buildings = []
+        self.geojson_files = filepaths
+
+        # Get current view bounds
+        width, height = self.GetSize()
+        view_x1, view_y1 = self.screen_to_world(0, 0)
+        view_x2, view_y2 = self.screen_to_world(width, height)
+
+        # Track bounds of loaded data
+        min_x, min_y = float('inf'), float('inf')
+        max_x, max_y = float('-inf'), float('-inf')
+
+        for filepath in filepaths:
+            try:
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+
+                if data.get('type') != 'FeatureCollection':
+                    continue
+
+                # Check CRS - handle EPSG:3857 (Web Mercator)
+                crs = data.get('crs', {})
+                is_web_mercator = 'EPSG::3857' in str(crs)
+
+                for feature in data.get('features', []):
+                    if feature.get('type') != 'Feature':
+                        continue
+
+                    props = feature.get('properties', {})
+                    geom = feature.get('geometry', {})
+
+                    if geom.get('type') != 'Polygon':
+                        continue
+
+                    # Get coordinates (first ring only for now)
+                    coords = geom.get('coordinates', [[]])[0]
+                    if len(coords) < 3:
+                        continue
+
+                    # Convert coordinates if needed
+                    building_coords = []
+                    for coord in coords[
+                        :-1]:  # Skip last (duplicate of first)
+                        x, y = coord[0], coord[1]
+
+                        # If Web Mercator, convert to local coordinates
+                        # For now, use as-is but offset to reasonable values
+                        if is_web_mercator:
+                            # Simple offset to center around origin
+                            x = x - 690000  # Adjust based on your data
+                            y = y - 5740000
+
+                        building_coords.append((x, y))
+                        min_x = min(min_x, x)
+                        max_x = max(max_x, x)
+                        min_y = min(min_y, y)
+                        max_y = max(max_y, y)
+
+                    # Check if building intersects view
+                    if self.polygon_intersects_view(building_coords,
+                                                    view_x1, view_y1,
+                                                    view_x2, view_y2):
+                        # Check if identical to existing building
+                        if not self.is_duplicate_building(building_coords,
+                                                          props.get(
+                                                                  'height',
+                                                                  10)):
+                            geojson_building = GeoJsonBuilding(
+                                building_coords,
+                                props.get('height', 10),
+                                props.get('id', str(uuid.uuid4()))
+                            )
+                            self.geojson_buildings.append(geojson_building)
+
+            except Exception as e:
+                print(f"Error loading {filepath}: {e}")
+
+        self.geojson_bounds = (min_x, min_y, max_x, max_y)
+        self.geojson_mode = 'show'
+        self.parent.geojson_btn.Enable()
+        self.parent.geojson_btn.SetLabel("GeoJSON: Import")
+        self.Refresh()
+
+    def polygon_intersects_view(self, coords, x1, y1, x2, y2):
+        """Check if polygon intersects with view rectangle"""
+        # Check if any vertex is in view
+        for x, y in coords:
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return True
+
+        # Check if view center is in polygon
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        inside = False
+        n = len(coords)
+        j = n - 1
+        for i in range(n):
+            xi, yi = coords[i]
+            xj, yj = coords[j]
+            if ((yi > cy) != (yj > cy)) and (
+                    cx < (xj - xi) * (cy - yi) / (yj - yi) + xi):
+                inside = not inside
+            j = i
+        return inside
+
+    def is_duplicate_building(self, coords, height):
+        """Check if building already exists in project"""
+        # Simple check based on bounding box and height
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        x1, y1 = min(xs), min(ys)
+        x2, y2 = max(xs), max(ys)
+
+        for building in self.buildings:
+            if (abs(building.x1 - x1) < 0.1 and abs(
+                    building.y1 - y1) < 0.1 and
+                    abs(building.x2 - x2) < 0.1 and abs(
+                        building.y2 - y2) < 0.1 and
+                    abs(building.height - height) < 0.1):
+                return True
+        return False
+
+    def import_selected_geojson(self):
+        """Import selected buildings with progress dialog
+        (threaded version for large datasets)"""
+
+        selected = [gb for gb in self.geojson_buildings if gb.selected]
+
+        if not selected:
+            wx.MessageBox("No buildings selected for import",
+                          "No Selection",
+                          wx.OK | wx.ICON_WARNING)
+            return 0
+
+        progress_dialog = ImportProgressDialog(self.parent, len(selected))
+
+        imported = []
+        cancelled = threading.Event()
+
+        def import_worker():
+            """Worker thread for importing"""
+            for i, geojson_building in enumerate(selected):
+                if cancelled.is_set():
+                    break
+
+                # Convert building
+                building = geojson_building.to_building()
+
+                # Update UI in main thread
+                wx.CallAfter(lambda b=building, gb=geojson_building: (
+                    self.buildings.append(b),
+                    imported.append(gb)
+                ))
+
+                # Update progress in main thread
+                wx.CallAfter(progress_dialog.update_progress, i + 1)
+
+                # Small delay for UI responsiveness
+                time.sleep(0.01)
+
+        # Start worker thread
+        worker = threading.Thread(target=import_worker)
+        worker.start()
+
+        # Show dialog (modal)
+        result = progress_dialog.ShowModal()
+
+        if result == wx.ID_CANCEL:
+            cancelled.set()
+
+        # Wait for worker to finish
+        worker.join(timeout=1.0)
+
+        progress_dialog.Destroy()
+
+        # Remove imported buildings
+        for building in imported:
+            if building in self.geojson_buildings:
+                self.geojson_buildings.remove(building)
+
+        # Update UI
+        self.Refresh()
+
+        return len(imported)
+
+
+    def toggle_geojson_display(self):
+        """Toggle display of GeoJSON buildings"""
+        if self.geojson_mode == 'hidden':
+            # Check if view has changed significantly
+            width, height = self.GetSize()
+            view_x1, view_y1 = self.screen_to_world(0, 0)
+            view_x2, view_y2 = self.screen_to_world(width, height)
+
+            if self.geojson_bounds:
+                bx1, by1, bx2, by2 = self.geojson_bounds
+                # If view is outside loaded area, reload
+                if (view_x2 < bx1 or view_x1 > bx2 or
+                        view_y2 < by1 or view_y1 > by2):
+                    # Reload files for new view
+                    if self.geojson_files:
+                        self.load_geojson_files(self.geojson_files)
+                    return
+
+            self.geojson_mode = 'show'
+            self.parent.geojson_btn.SetLabel("GeoJSON: Import")
+        elif self.geojson_mode == 'show':
+            self.geojson_mode = 'hidden'
+            self.parent.geojson_btn.SetLabel("GeoJSON: Show")
+
+        self.Refresh()
+
+    def draw_geojson_buildings(self, gc):
+        """Draw GeoJSON buildings"""
+        if self.geojson_mode != 'show':
+            return
+
+        for geojson_building in self.geojson_buildings:
+            # Create path for polygon
+            if not geojson_building.coordinates:
+                continue
+
+            path = gc.CreatePath()
+            first = True
+            for x, y in geojson_building.coordinates:
+                sx, sy = self.world_to_screen(x, y)
+                if first:
+                    path.MoveToPoint(sx, sy)
+                    first = False
+                else:
+                    path.AddLineToPoint(sx, sy)
+            path.CloseSubpath()
+
+            # Set color based on selection
+            if geojson_building.selected:
+                fill_color = wx.Colour(100, 255, 100, 100)  # Green
+                border_color = wx.Colour(0, 200, 0)
+            else:
+                fill_color = wx.Colour(255, 100, 100, 100)  # Red
+                border_color = wx.Colour(200, 0, 0)
+
+            gc.SetBrush(wx.Brush(fill_color))
+            gc.SetPen(wx.Pen(border_color, 2))
+            gc.DrawPath(path)
+
     def on_paint(self, event):
         """Handle paint events"""
         dc = wx.AutoBufferedPaintDC(self)
@@ -833,6 +1140,9 @@ class MapCanvas(wx.Panel):
         # Draw buildings
         for building in self.buildings:
             self.draw_building(gc, building)
+
+        # Draw GeoJSON buildings
+        self.draw_geojson_buildings(gc)
 
         if len(self.selected_buildings) > 0:
             if len(self.selected_buildings) > 1:
@@ -1327,6 +1637,15 @@ class MapCanvas(wx.Panel):
                 self.Refresh()
 
         elif self.mode == SelectMode.NORMAL:
+            # Check for GeoJSON building click first
+            if self.geojson_mode == 'show':
+                wx, wy = self.screen_to_world(event.GetX(), event.GetY())
+                for geojson_building in self.geojson_buildings:
+                    if geojson_building.contains_point(wx, wy):
+                        geojson_building.selected = not geojson_building.selected
+                        self.Refresh()
+                        return
+
             if event.ShiftDown():
                 # shift-click on map: start spanning rectangle selection
                 self.mode = SelectMode.RECTANGLE_SELECT
@@ -1544,6 +1863,62 @@ class MapCanvas(wx.Panel):
 
 # =========================================================================
 
+class ImportProgressDialog(wx.Dialog):
+    """Progress dialog for importing GeoJSON buildings"""
+
+    def __init__(self, parent, total_count):
+        super().__init__(parent, title="Importing Buildings",
+                         style=wx.DEFAULT_DIALOG_STYLE)
+
+        self.total_count = total_count
+        self.current_count = 0
+        self.cancelled = False
+
+        # Create UI
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Info text
+        self.info_text = wx.StaticText(panel,
+                                       label=f"Importing 0 of {total_count} buildings...")
+        sizer.Add(self.info_text, 0, wx.ALL | wx.EXPAND, 10)
+
+        # Progress bar
+        self.progress = wx.Gauge(panel, range=total_count,
+                                style=wx.GA_HORIZONTAL | wx.GA_SMOOTH)
+        sizer.Add(self.progress, 0, wx.ALL | wx.EXPAND, 10)
+
+        # Cancel button
+        cancel_btn = wx.Button(panel, wx.ID_CANCEL, "Cancel")
+        cancel_btn.Bind(wx.EVT_BUTTON, self.on_cancel)
+        sizer.Add(cancel_btn, 0, wx.ALL | wx.CENTER, 10)
+
+        panel.SetSizer(sizer)
+
+        # Size the dialog
+        sizer.Fit(self)
+        self.SetMinSize((400, -1))
+        self.Centre()
+
+    def update_progress(self, count):
+        """Update progress bar and text"""
+        self.current_count = count
+        self.progress.SetValue(count)
+        self.info_text.SetLabel(f"Importing {count} of {self.total_count} buildings...")
+
+        # Process UI events to keep dialog responsive
+        wx.GetApp().Yield()
+
+        # Return whether to continue
+        return not self.cancelled
+
+    def on_cancel(self, event):
+        """Handle cancel button"""
+        self.cancelled = True
+        self.EndModal(wx.ID_CANCEL)
+
+# =========================================================================
+
 class MainFrame(wx.Frame):
     """Main application frame"""
 
@@ -1567,14 +1942,21 @@ class MainFrame(wx.Frame):
         self.Show()
 
     def create_menu_bar(self):
-        """Create the menu bar"""
+        """Create the menu bar - updated with Import from GeoJSON"""
         menubar = wx.MenuBar()
 
         # File menu
         file_menu = wx.Menu()
-        file_menu.Append(wx.ID_NEW, "&New\tCtrl+N", "Create a new project")
+        file_menu.Append(wx.ID_NEW, "&New\tCtrl+N",
+                         "Create a new project")
         file_menu.Append(wx.ID_OPEN, "&Open\tCtrl+O",
                          "Open a CityJSON file")
+
+        # Add Import from GeoJSON
+        import_geojson = file_menu.Append(
+            wx.ID_ANY, "&Import from GeoJSON\tCtrl+I",
+            "Import buildings from GeoJSON files")
+
         file_menu.Append(wx.ID_SAVE, "&Save\tCtrl+S",
                          "Save the current project")
         file_menu.Append(wx.ID_SAVEAS, "Save &As...\tCtrl+Shift+S",
@@ -1640,6 +2022,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_open, id=wx.ID_OPEN)
         self.Bind(wx.EVT_MENU, self.on_save, id=wx.ID_SAVE)
         self.Bind(wx.EVT_MENU, self.on_save_as, id=wx.ID_SAVEAS)
+        self.Bind(wx.EVT_MENU, self.on_import_geojson,
+                  id=import_geojson.GetId())
         self.Bind(wx.EVT_MENU, self.on_open_austal,
                   id=import_austal.GetId())
         self.Bind(wx.EVT_MENU, self.on_save_austal,
@@ -1717,6 +2101,14 @@ class MainFrame(wx.Frame):
         zoom_fit_btn = wx.Button(toolbar, label="Zoom Fit")
         zoom_fit_btn.Bind(wx.EVT_BUTTON, self.on_zoom_to_buildings)
         toolbar.AddControl(zoom_fit_btn)
+
+        toolbar.AddSeparator()
+
+        # GeoJSON button
+        self.geojson_btn = wx.Button(toolbar, label="GeoJSON: None")
+        self.geojson_btn.Disable()
+        self.geojson_btn.Bind(wx.EVT_BUTTON, self.on_geojson_button)
+        toolbar.AddControl(self.geojson_btn)
 
         toolbar.Realize()
 
@@ -2011,29 +2403,31 @@ class MainFrame(wx.Frame):
             self.save_austal(filepath)
         dialog.Destroy()
 
-    def on_open_cityjson(self, event):
-        """Open a CityJSON file"""
+    def on_import_geojson(self, event):
+        """Import buildings from GeoJSON files"""
         dialog = wx.FileDialog(
             self,
-            "Open CityJSON file",
-            defaultDir=self.current_directory,
-            wildcard=f"CityJSON files (*{FEXT})|*{FEXT}"
-                     f"|All files (*.*)|*.*",
-            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+            "Select GeoJSON files",
+            wildcard="GeoJSON files (*.geojson;*.json)|*.geojson;*.json|All files (*.*)|*.*",
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST | wx.FD_MULTIPLE
         )
 
         if dialog.ShowModal() == wx.ID_OK:
-            filepath = dialog.GetPath()
-            self.current_directory = os.path.dirname(filepath)
-            self.load_cityjson(filepath)
+            filepaths = dialog.GetPaths()
+            self.canvas.load_geojson_files(filepaths)
+            self.SetStatusText(f"Loaded {len(self.canvas.geojson_buildings)} buildings from GeoJSON")
+
         dialog.Destroy()
 
-    def on_save_cityjson(self, event):
-        """Save the current project"""
-        if self.current_file:
-            self.save_cityjson(self.current_file)
-        else:
-            self.on_save_as(event)
+    def on_geojson_button(self, event):
+        """Handle GeoJSON button click"""
+        if self.geojson_btn.GetLabel() == "GeoJSON: Import":
+            # Import selected buildings
+            count = self.canvas.import_selected_geojson()
+            self.SetStatusText(f"Imported {count} buildings from GeoJSON")
+        elif self.geojson_btn.GetLabel() == "GeoJSON: Show":
+            # Show hidden GeoJSON buildings
+            self.canvas.toggle_geojson_display()
 
     def on_save_as(self, event):
         """Save with a new filename"""

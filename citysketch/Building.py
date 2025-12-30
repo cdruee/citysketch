@@ -168,13 +168,13 @@ class Building:
 class BuildingGroup:
     buildings: List[Building]
 
-    _x1: float = None  # lower left coner x, y
-    _y1: float = None
-    _a: float = None  # surrounding rectangle size along x, y axes
-    _b: float = None
-    _xr: float = None # rotation vertex x, y
-    _yr: float = None
-    _rotation: float = None
+    _x1: float | None = None  # lower left coner x, y
+    _y1: float | None = None
+    _a: float | None = None  # surrounding rectangle size along x, y axes
+    _b: float | None = None
+    _xr: float | None = None # rotation vertex x, y
+    _yr: float | None = None
+    _rotation: float | None = None
 
     def __init__(self, buildings: List[Building]):
         self.buildings = buildings
@@ -283,7 +283,7 @@ class BuildingGroup:
             rotated.append(building_to_world(self, px, py))
         return rotated
 
-    def get_llur(self) -> Tuple[float, float, float, float]:
+    def get_llur(self) -> Tuple[float, float, float, float]| None:
         if self._x1 is None or self._y1 is None:
             return None
         corners = self.get_corners()
