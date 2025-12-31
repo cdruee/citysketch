@@ -245,18 +245,23 @@ class GeoJsonBuilding:
         cx, cy = (lat1 + lat2) / 2, (lon1 + lon2) / 2
         return self.contains_point(cx, cy)
 
-    def to_buildings(self, storey_height: float = 3.3):
-        """Convert to one or more regular Building objects by fitting rectangles"""
+    def to_buildings(self, storey_height: float = 3.3, geo_to_world=None):
+        """Convert to one or more regular Building objects by fitting rectangles.
+
+        Args:
+            storey_height: Height per storey in meters
+            geo_to_world: Function to convert (lat, lon) to world coordinates (x, y).
+                          If None, coordinates are used as-is.
+        """
         buildings = []
         rectangles = RectangleFitter.fit_multiple_rectangles(
             self.coordinates)
 
         for i, rect_coords in enumerate(rectangles):
-            xs = [c[0] for c in rect_coords]
-            ys = [c[1] for c in rect_coords]
-
-            cx = sum(xs) / 4
-            cy = sum(ys) / 4
+            # Convert coordinates if transformer provided
+            if geo_to_world:
+                rect_coords = [geo_to_world(lat, lon) for lat, lon in
+                               rect_coords]
 
             # Calculate rotation from first edge
             dx = rect_coords[1][0] - rect_coords[0][0]
@@ -264,23 +269,25 @@ class GeoJsonBuilding:
             rotation = math.atan2(dy, dx)
 
             # Calculate dimensions
-            width = math.sqrt(dx ** 2 + dy ** 2)
+            a = math.sqrt(dx ** 2 + dy ** 2)  # width along first edge
             side2_dx = rect_coords[3][0] - rect_coords[0][0]
             side2_dy = rect_coords[3][1] - rect_coords[0][1]
-            height_2d = math.sqrt(side2_dx ** 2 + side2_dy ** 2)
+            b = math.sqrt(
+                side2_dx ** 2 + side2_dy ** 2)  # height along second edge
+
+            # x1, y1 is the anchor point (first corner)
+            x1, y1 = rect_coords[0]
 
             building = Building(
                 id=f"geojson_{self.feature_id}_{i}" if i > 0 else f"geojson_{self.feature_id}",
-                lat1=cx - width / 2,
-                lon1=cy - height_2d / 2,
-                lat2=cx + width / 2,
-                lon2=cy + height_2d / 2,
+                x1=x1,
+                y1=y1,
+                a=a,
+                b=b,
                 height=self.height,
-                stories=max(1, round(self.height / storey_height))
+                storeys=max(1, round(self.height / storey_height)),
+                rotation=rotation
             )
-
-            building.rotation = rotation
-            building.rotation_center = (cx, cy)
 
             if i == 0:
                 building.polygon_coords = self.coordinates
@@ -289,16 +296,17 @@ class GeoJsonBuilding:
 
         return buildings
 
-    def to_building(self, storey_height: float = 3.3):
+    def to_building(self, storey_height: float = 3.3, geo_to_world=None):
         """Convert to a single Building object (returns first fitted rectangle).
         
-        This is a convenience method for cases where only one building is needed.
-        For complex polygons that may decompose into multiple buildings, use to_buildings().
+        Args:
+            storey_height: Height per storey in meters
+            geo_to_world: Function to convert (lat, lon) to world coordinates (x, y).
         
         Returns:
             Building: The first building from the fitted rectangles, or None if fitting fails.
         """
-        buildings = self.to_buildings(storey_height)
+        buildings = self.to_buildings(storey_height, geo_to_world=geo_to_world)
         return buildings[0] if buildings else None
 
 

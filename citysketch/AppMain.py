@@ -942,7 +942,8 @@ class MapCanvas(wx.Panel):
                     break
 
                 # Convert building
-                building = geojson_building.to_building()
+                building = geojson_building.to_building(
+                    geo_to_world=self.geo_to_world)
 
                 # Update UI in main thread
                 wx.CallAfter(lambda b=building, gb=geojson_building: (
@@ -955,6 +956,9 @@ class MapCanvas(wx.Panel):
 
                 # Small delay for UI responsiveness
                 time.sleep(0.01)
+
+            # Close dialog when done
+            wx.CallAfter(progress_dialog.EndModal, wx.ID_OK)
 
         # Start worker thread
         worker = threading.Thread(target=import_worker)
@@ -1634,12 +1638,14 @@ class MapCanvas(wx.Panel):
             # Check for GeoJSON building click first
             if self.geojson_mode == 'show':
                 wx, wy = self.screen_to_world(event.GetX(), event.GetY())
+                lat, lon = self.world_to_geo(wx,
+                                             wy)  # Convert to geo coordinates
                 for geojson_building in self.geojson_buildings:
-                    if geojson_building.contains_point(wx, wy):
+                    if geojson_building.contains_point(lat,
+                                                       lon):  # Use lat, lon
                         geojson_building.selected = not geojson_building.selected
                         self.Refresh()
                         return
-
             if event.ShiftDown():
                 # shift-click on map: start spanning rectangle selection
                 self.mode = SelectMode.RECTANGLE_SELECT
