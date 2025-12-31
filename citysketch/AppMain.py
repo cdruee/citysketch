@@ -569,7 +569,16 @@ class GeoTiffLayer:
 # =========================================================================
 
 class MapCanvas(wx.Panel):
-    """The main canvas for displaying and editing buildings"""
+    """
+    The main canvas for displaying and editing buildings
+    The coordinate systems are
+    -[screen]
+        right(x) and up(y) from lower left
+        unit: screen pixels
+    -[world]
+        east(x) and north(y) of lat = = lon = 0
+        unit: tile pixels size at zoom 16
+    """
 
     BASE_TILE_SIZE = 256
     BASE_GEO_ZOOM = 16
@@ -654,13 +663,16 @@ class MapCanvas(wx.Panel):
         """Convert geographic coordinates to world coordinates"""
         wm_x ,wm_y = ll2wm(lat, lon)
         center_x, center_y = ll2wm(self.geo_center_lat, self.geo_center_lon)
-        return wm_x - center_x ,wm_y - center_y
+        scale = math.cos(math.radians(self.geo_center_lat))**2
+
+        return (wm_x - center_x) * scale, (wm_y - center_y) * scale
 
     def world_to_geo(self, x: float, y: float) -> Tuple[float, float]:
         """Convert world coordinates to geographic coordinates"""
+        scale = math.cos(math.radians(self.geo_center_lat))**2
         center_x, center_y = ll2wm(self.geo_center_lat, self.geo_center_lon)
-        wm_x = x + center_x
-        wm_y = y + center_y
+        wm_x = x / scale + center_x
+        wm_y = y / scale + center_y
         return wm2ll(wm_x, wm_y)
 
     def get_view_corners(self, coords : str | None = None):
