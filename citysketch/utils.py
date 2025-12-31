@@ -1,7 +1,165 @@
 import json
+import math
 import urllib.request
 from enum import Enum
 
+from osgeo import osr
+
+# -------------------------------------------------------------------------
+
+# WGS84 - World Geodetic System 1984, https://epsg.io/4326
+LL = osr.SpatialReference()
+LL.ImportFromEPSG(4326)
+# DHDN / 3-degree Gauss-Kruger zone 3 (E-N), https://epsg.io/5677
+GK = osr.SpatialReference()
+GK.ImportFromEPSG(5677)
+# ETRS89 / UTM zone 32N, https://epsg.io/25832
+UT = osr.SpatialReference()
+UT.ImportFromEPSG(25832)
+# WGS 84 / Pseudo-Mercator, https://epsg.io/3857
+WM =  osr.SpatialReference()
+WM.ImportFromEPSG(3857)
+
+# =========================================================================
+
+class MapProvider(Enum):
+    NONE = "None"
+    OSM = "OpenStreetMap"
+    SATELLITE = "Satellite"
+    TERRAIN = "Terrain"
+    HILLSHADE = "Hillshade"
+
+# =========================================================================
+
+def get_epsg2ll(epsg_id: int):
+    crs = osr.SpatialReference()
+    crs.ImportFromEPSG(int(epsg_id))
+    return osr.CoordinateTransformation(crs, LL)
+
+def gk2ll(rechts: float, hoch: float) -> tuple[float, float]:
+    """
+    Converts Gauss-Krüger rechts/hoch (east/north) coordinates
+    (DHDN / 3-degree Gauss-Kruger zone 3 (E-N), https://epsg.io/5677)
+    into Latitude/longitude  (WGS84, https://epsg.io/4326) position.
+
+    :param rechts: "Rechtswert" (eastward coordinate) in m
+    :type: float
+    :param hoch: "Hochwert" (northward coordinate) in m
+    :type: float
+    :return: latitude in degrees, longitude in degrees, altitude in meters
+    :rtype: float, float, float
+    """
+    transform = osr.CoordinateTransformation(GK, LL)
+    lat, lon, zz = transform.TransformPoint(rechts, hoch)
+    return lat, lon
+
+# -------------------------------------------------------------------------
+
+def ll2gk(lat: float, lon: float) -> tuple[float, float]:
+    """
+    Converts Latitude/longitude  (WGS84, https://epsg.io/4326) position
+    into Gauss-Krüger rechts/hoch (east/north) coordinates
+    (DHDN / 3-degree Gauss-Kruger zone 3 (E-N), https://epsg.io/5677).
+
+    :param lat: latitude in degrees
+    :type: float
+    :param lon: longitude in degrees
+    :type: float
+    :return: "Rechtswert" (eastward coordinate) in m,
+        "Hochwert" (northward coordinate) in m
+    :rtype: float, float
+    """
+    transform = osr.CoordinateTransformation(LL, GK)
+    x, y, z = transform.TransformPoint(lat, lon)
+    return x, y
+
+# -------------------------------------------------------------------------
+
+def ut2ll(east: float, north:float) -> tuple[float, float]:
+    """
+    Converts UTM east/north coordinates
+    (ETRS89 / UTM zone 32N, https://epsg.io/25832)
+    into Latitude/longitude  (WGS84, https://epsg.io/4326) position.
+
+    :param east: eastward UTM coordinate in m
+    :type: float
+    :param north: northward UTM coordinate in m
+    :type: float
+    :return: latitude in degrees, longitude in degrees, altitude in meters
+    :rtype: float, float, float
+    """
+    transform = osr.CoordinateTransformation(UT, LL)
+    lat, lon, zz = transform.TransformPoint(east, north)
+    return lat, lon
+
+# -------------------------------------------------------------------------
+
+def ll2ut(lat: float, lon: float) -> tuple[float, float]:
+    """
+    Converts Latitude/longitude  (WGS84, https://epsg.io/4326) position
+    into UTM east/north coordinates
+    (ETRS89 / UTM zone 32N, https://epsg.io/25832)
+
+    :param lat: latitude in degrees
+    :type: float
+    :param lon: longitude in degrees
+    :type: float
+    :return: "easting" (eastward coordinate) in m,
+        "northing" (northward coordinate) in m
+    :rtype: float, float
+    """
+    transform = osr.CoordinateTransformation(LL, UT)
+    easting, nothing, zz = transform.TransformPoint(lat, lon)
+    return easting, nothing
+
+# -------------------------------------------------------------------------
+
+def ll2wm(lat: float, lon: float) -> tuple[float, float]:
+    """
+    Converts Latitude/longitude  (WGS84, https://epsg.io/4326) position
+    into Web Mercator (WGS 84 / Pseudo-Mercator, https://epsg.io/3857).
+
+    :param lat: latitude in degrees
+    :type: float
+    :param lon: longitude in degrees
+    :type: float
+    :return: eastward coordinate in m,
+        northward coordinate in m
+    :rtype: float, float
+    """
+    transform = osr.CoordinateTransformation(LL, WM)
+    x, y, z = transform.TransformPoint(lat, lon)
+    return x, y
+
+# -------------------------------------------------------------------------
+
+def wm2ll(x, y):
+    """
+    Converts Web Mercator (WGS 84 / Pseudo-Mercator, https://epsg.io/3857)
+    into Latitude/longitude  (WGS84, https://epsg.io/4326) position.
+
+    :param x: eastward coordinate in m
+    :type: float
+    :param y: northward coordinate in m
+    :type: float
+    :return: latitude in degrees, longitude in degrees, altitude in meters
+    :rtype: float, float, float
+    """
+    transform = osr.CoordinateTransformation(WM, LL)
+    lat, lon, zz = transform.TransformPoint(x, y)
+    return lat, lon
+
+# -------------------------------------------------------------------------
+
+def math2geo(rot):
+    return rot * 180 / math.pi
+
+# -------------------------------------------------------------------------
+
+def geo2math(rot):
+    return rot * math.pi / 180
+
+# -------------------------------------------------------------------------
 
 def get_location_from_ip():
     """
@@ -49,6 +207,9 @@ def get_location_from_ip():
         # If all services fail, return None
         return None
 
+
+    # -------------------------------------------------------------------------
+
     except Exception as e:
         print(f"Error getting IP location: {e}")
         return None
@@ -68,29 +229,3 @@ def get_location_with_fallback():
         # Fallback to default location (Camous II, Uni Trier, Germany)
         print("Could not detect location, using default")
         return (49.74795,6.67412)
-
-
-def lat_lon_to_web_mercator(lat, lon):
-    """Convert latitude/longitude to Web Mercator coordinates (EPSG:3857)"""
-    import math
-
-    # Constants for Web Mercator projection
-    R = 6378137.0  # Earth radius in meters
-
-    # Convert to radians
-    lat_rad = math.radians(lat)
-    lon_rad = math.radians(lon)
-
-    # Calculate Web Mercator coordinates
-    x = R * lon_rad
-    y = R * math.log(math.tan(math.pi / 4 + lat_rad / 2))
-
-    return x, y
-
-
-class MapProvider(Enum):
-    NONE = "None"
-    OSM = "OpenStreetMap"
-    SATELLITE = "Satellite"
-    TERRAIN = "Terrain"
-    HILLSHADE = "Hillshade"

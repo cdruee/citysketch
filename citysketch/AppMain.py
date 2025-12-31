@@ -41,10 +41,9 @@ from .App3dview import OPENGL_SUPPORT, Building3DViewer
 from .AppSettings import colorset, settings
 from .Building import Building, BuildingGroup
 from .ColorDialogs import ColorSettingsDialog
-from .GeoJSON import GeoJsonBuilding, BuildingMerger
+from .GeoJSON import GeoJsonBuilding, GeoJsonBuildingCache, BuildingMerger
 from .austaltxt import load_from_austaltxt, save_to_austaltxt
-from .utils import (MapProvider, get_location_with_fallback,
-                    lat_lon_to_web_mercator)
+from .utils import ll2wm, wm2ll, MapProvider, get_location_with_fallback
 
 APP_NAME = "CitySketch"
 APP_VERSION = __version__
@@ -578,6 +577,7 @@ class MapCanvas(wx.Panel):
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
+        self.main_frame = None  # Set by MainFrame after creation
         self.statusbar = None
 
         # State
@@ -649,6 +649,46 @@ class MapCanvas(wx.Panel):
         sx = plot_x
         sy = size_y - plot_y
         return sx, sy
+
+    def geo_to_world(self, lat: float, lon: float) -> Tuple[float, float]:
+        """Convert geographic coordinates to world coordinates"""
+        wm_x ,wm_y = ll2wm(lat, lon)
+        center_x, center_y = ll2wm(self.geo_center_lat, self.geo_center_lon)
+        return wm_x - center_x ,wm_y - center_y
+
+    def world_to_geo(self, x: float, y: float) -> Tuple[float, float]:
+        """Convert world coordinates to geographic coordinates"""
+        center_x, center_y = ll2wm(self.geo_center_lat, self.geo_center_lon)
+        wm_x = x + center_x
+        wm_y = y + center_y
+        return wm2ll(wm_x, wm_y)
+
+    def get_view_corners(self, coords : str | None = None):
+        if not coords:
+            coords = "world"
+
+        # Get current view bounds
+        width, height = self.GetSize()
+        view_x1, view_y1 = self.screen_to_world(0, 0)
+        view_x2, view_y2 = self.screen_to_world(width, height)
+
+        # Ensure view bounds are properly ordered
+        if view_x1 > view_x2:
+            view_x1, view_x2 = view_x2, view_x1
+        if view_y1 > view_y2:
+            view_y1, view_y2 = view_y2, view_y1
+
+        if coords == "world":
+            return view_x1, view_y1, view_x2, view_y2
+        elif coords == "geo":
+            min_lat, min_lon = self.world_to_geo(view_x1, view_y1)
+            max_lat, max_lon = self.world_to_geo(view_x2, view_y2)
+            return min_lat, min_lon, max_lat, max_lon
+        elif coords == "screen":
+            return 0, 0, width, height
+        else:
+            raise ValueError(f"Invalid choice of coords = {coords}")
+
 
     def snap_point(self, x: float, y: float,
                    exclude: Optional[Building | BuildingGroup] = None
@@ -772,252 +812,76 @@ class MapCanvas(wx.Panel):
         self.tiles_loading.discard((z, x, y))
         wx.EndBusyCursor()
 
-    def geo_to_world(self, lat, lon):
-        """Convert geographic coordinates to world coordinates - FIXED VERSION"""
-        # Use proper Web Mercator projection instead of simple linear scaling
-        # This matches how the map tiles are projected
-
-        # Web Mercator transformation
-        x = (lon - self.geo_center_lon) * 20037508.34 / 180.0
-        lat_rad = math.radians(lat)
-        y = math.log(
-            math.tan((90 + lat) * math.pi / 360.0)) * 20037508.34 / math.pi
-
-        # Center coordinates
-        center_lat_rad = math.radians(self.geo_center_lat)
-        center_y = math.log(math.tan((
-                                                 90 + self.geo_center_lat) * math.pi / 360.0)) * 20037508.34 / math.pi
-
-        # Relative to center
-        y = y - center_y
-
-        return x, y
-
-    def world_to_geo(self, x, y):
-        """Convert world coordinates to geographic coordinates - FIXED VERSION"""
-        # Inverse Web Mercator transformation
-
-        # Add center offset back
-        center_lat_rad = math.radians(self.geo_center_lat)
-        center_y = math.log(math.tan((
-                                             90 + self.geo_center_lat) * math.pi / 360.0)) * 20037508.34 / math.pi
-        y_abs = y + center_y
-
-        # Convert back to lat/lon
-        lon = (x * 180.0 / 20037508.34) + self.geo_center_lon
-        lat = (math.atan(math.exp(
-            y_abs * math.pi / 20037508.34)) * 360.0 / math.pi) - 90
-
-        return lat, lon
+    # def geo_to_world(self, lat, lon):
+    #     """Convert geographic coordinates to world coordinates - FIXED VERSION"""
+    #     # Use proper Web Mercator projection instead of simple linear scaling
+    #     # This matches how the map tiles are projected
+    #
+    #     # Web Mercator transformation
+    #     x = (lon - self.geo_center_lon) * 20037508.34 / 180.0
+    #     lat_rad = math.radians(lat)
+    #     y = math.log(
+    #         math.tan((90 + lat) * math.pi / 360.0)) * 20037508.34 / math.pi
+    #
+    #     # Center coordinates
+    #     center_lat_rad = math.radians(self.geo_center_lat)
+    #     center_y = math.log(math.tan((
+    #                                              90 + self.geo_center_lat) * math.pi / 360.0)) * 20037508.34 / math.pi
+    #
+    #     # Relative to center
+    #     y = y - center_y
+    #
+    #     return x, y
+    #
+    # def world_to_geo(self, x, y):
+    #     """Convert world coordinates to geographic coordinates - FIXED VERSION"""
+    #     # Inverse Web Mercator transformation
+    #
+    #     # Add center offset back
+    #     center_lat_rad = math.radians(self.geo_center_lat)
+    #     center_y = math.log(math.tan((
+    #                                          90 + self.geo_center_lat) * math.pi / 360.0)) * 20037508.34 / math.pi
+    #     y_abs = y + center_y
+    #
+    #     # Convert back to lat/lon
+    #     lon = (x * 180.0 / 20037508.34) + self.geo_center_lon
+    #     lat = (math.atan(math.exp(
+    #         y_abs * math.pi / 20037508.34)) * 360.0 / math.pi) - 90
+    #
+    #     return lat, lon
 
     def load_geojson_files(self, filepaths):
         """Load buildings from GeoJSON files"""
         # Note: GeoJsonBuilding is already imported at module level
 
-        self.geojson_buildings = []
-        self.geojson_files = filepaths
+        area = self.get_view_corners('geo')
+        self.geojson_buildings = GeoJsonBuildingCache()
+        # try:
+        loaded, skipped = self.geojson_buildings.load(filepaths, area)
 
-        # Get current view bounds
-        width, height = self.GetSize()
-        view_x1, view_y1 = self.screen_to_world(0, 0)
-        view_x2, view_y2 = self.screen_to_world(width, height)
-
-        # Ensure view bounds are properly ordered
-        if view_x1 > view_x2:
-            view_x1, view_x2 = view_x2, view_x1
-        if view_y1 > view_y2:
-            view_y1, view_y2 = view_y2, view_y1
-
-        # Track bounds of loaded data
-        min_x, min_y = float('inf'), float('inf')
-        max_x, max_y = float('-inf'), float('-inf')
-
-        loaded_count = 0
-        skipped_count = 0
-
-        for filepath in filepaths:
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-
-                if data.get('type') != 'FeatureCollection':
-                    print(f"Skipping {filepath}: Not a FeatureCollection")
-                    continue
-
-                # Check CRS - handle EPSG:3857 (Web Mercator)
-                crs = data.get('crs', {})
-                crs_str = str(crs)
-                is_web_mercator = 'EPSG::3857' in crs_str or '3857' in crs_str
-
-                # Determine offset based on map center if using Web Mercator
-                offset_x = 0
-                offset_y = 0
-                if is_web_mercator and self.map_provider != MapProvider.NONE:
-                    # Convert map center to Web Mercator for offset calculation
-                    # This is approximate - you may need to adjust based on your data
-                    center_x, center_y = lat_lon_to_web_mercator(
-                        self.geo_center_lat, self.geo_center_lon
-                    )
-                    # Round to nearest major grid line for cleaner offsets
-                    offset_x = round(center_x / 100000) * 100000
-                    offset_y = round(center_y / 100000) * 100000
-
-                for feature in data.get('features', []):
-                    if feature.get('type') != 'Feature':
-                        continue
-
-                    props = feature.get('properties', {})
-                    geom = feature.get('geometry', {})
-
-                    if geom.get('type') not in ['Polygon', 'MultiPolygon']:
-                        continue
-
-                    # Handle both Polygon and MultiPolygon
-                    if geom.get('type') == 'Polygon':
-                        polygon_coords_list = [
-                            geom.get('coordinates', [[]])[0]]
-                    else:  # MultiPolygon
-                        polygon_coords_list = [poly[0] for poly in
-                                               geom.get('coordinates', [])]
-
-                    for polygon_coords in polygon_coords_list:
-                        if len(polygon_coords) < 3:
-                            continue
-
-                        # Convert coordinates
-                        building_coords = []
-                        for coord in polygon_coords[
-                            :-1]:  # Skip last (duplicate of first)
-                            if len(coord) < 2:
-                                continue
-
-                            x, y = coord[0], coord[1]
-
-                            # Apply offset for Web Mercator
-                            if is_web_mercator:
-                                x = x - offset_x
-                                y = y - offset_y
-                                # Scale down for more manageable coordinates
-                                x = x / 100  # Adjust scale as needed
-                                y = y / 100
-
-                            building_coords.append((x, y))
-                            min_x = min(min_x, x)
-                            max_x = max(max_x, x)
-                            min_y = min(min_y, y)
-                            max_y = max(max_y, y)
-
-                        # Skip if not enough coordinates
-                        if len(building_coords) < 3:
-                            continue
-
-                        # Check if building intersects view
-                        if self.polygon_intersects_view(building_coords,
-                                                        view_x1, view_y1,
-                                                        view_x2, view_y2):
-                            # Check if identical to existing building
-                            height = float(props.get('height', 10.0))
-
-                            if not self.is_duplicate_building(
-                                    building_coords, height):
-                                # Get building ID from properties
-                                building_id = str(props.get('id',
-                                                            props.get(
-                                                                'osm_id',
-                                                                str(uuid.uuid4()))))
-
-                                geojson_building = GeoJsonBuilding(
-                                    coordinates=building_coords,
-                                    height=height,
-                                    feature_id=building_id
-                                )
-
-                                # Add additional properties if needed
-                                if 'var' in props:
-                                    geojson_building.height_variance = float(
-                                        props['var'])
-                                if 'region' in props:
-                                    geojson_building.region = props[
-                                        'region']
-                                if 'source' in props:
-                                    geojson_building.source = props[
-                                        'source']
-
-                                self.geojson_buildings.append(
-                                    geojson_building)
-                                loaded_count += 1
-                            else:
-                                skipped_count += 1
-
-            except FileNotFoundError:
-                wx.MessageBox(f"File not found: {filepath}", "Error",
-                              wx.OK | wx.ICON_ERROR)
-            except json.JSONDecodeError as e:
-                wx.MessageBox(f"Invalid JSON in {filepath}: {str(e)}",
-                              "Error", wx.OK | wx.ICON_ERROR)
-            except Exception as e:
-                print(f"Error loading {filepath}: {e}")
-                wx.MessageBox(f"Error loading {filepath}: {str(e)}",
-                              "Error", wx.OK | wx.ICON_ERROR)
-
-        # Store bounds for later reference
-        if min_x != float('inf'):
-            self.geojson_bounds = (min_x, min_y, max_x, max_y)
-        else:
-            self.geojson_bounds = None
+        # except Exception as e:
+        #     print(f"Error loading files: {e}")
+        #     wx.MessageBox(f"Error loading files: {str(e)}",
+        #                   "Error", wx.OK | wx.ICON_ERROR)
 
         # Update UI state
         if self.geojson_buildings:
             self.geojson_mode = 'show'
-            self.parent.parent.geojson_btn.Enable()
-            self.parent.parent.geojson_btn.SetLabel("GeoJSON: Import")
-            msg = f"Loaded {loaded_count} buildings from GeoJSON"
-            if skipped_count > 0:
-                msg += f" ({skipped_count} duplicates skipped)"
-            self.parent.parent.SetStatusText(msg)
+            self.main_frame.geojson_btn.Enable()
+            self.main_frame.geojson_btn.SetLabel("GeoJSON: Import")
+            msg = f"Loaded {loaded} buildings from GeoJSON"
+            if skipped > 0:
+                msg += f" ({skipped} duplicates skipped)"
+            self.main_frame.SetStatusText(msg)
         else:
             self.geojson_mode = 'none'
-            self.parent.parent.geojson_btn.SetLabel("GeoJSON: None")
-            self.parent.parent.geojson_btn.Disable()
+            self.main_frame.geojson_btn.SetLabel("GeoJSON: None")
+            self.main_frame.geojson_btn.Disable()
             wx.MessageBox("No buildings found in view area",
                           "No Buildings",
                           wx.OK | wx.ICON_INFORMATION)
 
         self.Refresh()
-
-    def polygon_intersects_view(self, coords, x1, y1, x2, y2):
-        """Check if polygon intersects with view rectangle"""
-        # Check if any vertex is in view
-        for x, y in coords:
-            if x1 <= x <= x2 and y1 <= y <= y2:
-                return True
-
-        # Check if polygon bounding box intersects view
-        if coords:
-            poly_x_min = min(c[0] for c in coords)
-            poly_x_max = max(c[0] for c in coords)
-            poly_y_min = min(c[1] for c in coords)
-            poly_y_max = max(c[1] for c in coords)
-
-            # Check for intersection
-            if not (poly_x_max < x1 or poly_x_min > x2 or
-                    poly_y_max < y1 or poly_y_min > y2):
-                return True
-
-        # Check if view center is in polygon
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-        inside = False
-        n = len(coords)
-        j = n - 1
-        for i in range(n):
-            xi, yi = coords[i]
-            xj, yj = coords[j]
-            if ((yi > cy) != (yj > cy)) and (
-                    cx < (xj - xi) * (cy - yi) / (yj - yi) + xi):
-                inside = not inside
-            j = i
-
-        return inside
 
     def is_duplicate_building(self, coords, height):
         """Check if building already exists in project"""
@@ -1152,7 +1016,7 @@ class MapCanvas(wx.Panel):
                 with open(filepath, 'w') as f:
                     json.dump(geojson, f, indent=2)
 
-                self.parent.SetStatusText(f"Exported to {filepath}")
+                self.main_frame.SetStatusText(f"Exported to {filepath}")
 
             dialog.Destroy()
         else:
@@ -1181,10 +1045,10 @@ class MapCanvas(wx.Panel):
                     return
 
             self.geojson_mode = 'show'
-            self.parent.geojson_btn.SetLabel("GeoJSON: Import")
+            self.main_frame.geojson_btn.SetLabel("GeoJSON: Import")
         elif self.geojson_mode == 'show':
             self.geojson_mode = 'hidden'
-            self.parent.geojson_btn.SetLabel("GeoJSON: Show")
+            self.main_frame.geojson_btn.SetLabel("GeoJSON: Show")
 
         self.Refresh()
 
@@ -1200,8 +1064,11 @@ class MapCanvas(wx.Panel):
 
             path = gc.CreatePath()
             first = True
-            for x, y in geojson_building.coordinates:
-                sx, sy = self.world_to_screen(x, y)
+            for lat, lon in geojson_building.coordinates:
+
+                sx, sy = self.world_to_screen(
+                    *self.geo_to_world(lat, lon)
+                )
                 if first:
                     path.MoveToPoint(sx, sy)
                     first = False
@@ -2234,6 +2101,7 @@ class MainFrame(wx.Frame):
 
         # Create canvas
         self.canvas = MapCanvas(panel)
+        self.canvas.main_frame = self  # Store reference to main frame
         sizer.Add(self.canvas, 1, wx.EXPAND)
 
         # Status bar

@@ -9,6 +9,8 @@ import uuid
 
 from osgeo import osr
 
+from utils import LL, GK, UT, gk2ll, ll2gk, ut2ll, ll2ut, math2geo, \
+    geo2math
 from .Building import Building
 
 logger = logging.getLogger(__name__)
@@ -17,104 +19,6 @@ osr.UseExceptions()
 # -------------------------------------------------------------------------
 
 MAX_CENTER_DISTANCE = 10.  # m
-
-# WGS84 - World Geodetic System 1984, https://epsg.io/4326
-LL = osr.SpatialReference()
-LL.ImportFromEPSG(4326)
-# DHDN / 3-degree Gauss-Kruger zone 3 (E-N), https://epsg.io/5677
-GK = osr.SpatialReference()
-GK.ImportFromEPSG(5677)
-# ETRS89 / UTM zone 32N, https://epsg.io/25832
-UT = osr.SpatialReference()
-UT.ImportFromEPSG(25832)
-
-# -------------------------------------------------------------------------
-
-def gk2ll(rechts: float, hoch: float) -> tuple[float, float]:
-    """
-    Converts Gauss-Krüger rechts/hoch (east/north) coordinates
-    (DHDN / 3-degree Gauss-Kruger zone 3 (E-N), https://epsg.io/5677)
-    into Latitude/longitude  (WGS84, https://epsg.io/4326) position.
-
-    :param rechts: "Rechtswert" (eastward coordinate) in m
-    :type: float
-    :param hoch: "Hochwert" (northward coordinate) in m
-    :type: float
-    :return: latitude in degrees, longitude in degrees, altitude in meters
-    :rtype: float, float, float
-    """
-    transform = osr.CoordinateTransformation(GK, LL)
-    lat, lon, zz = transform.TransformPoint(rechts, hoch)
-    return lat, lon
-
-# -------------------------------------------------------------------------
-
-def ll2gk(lat: float, lon: float) -> tuple[float, float]:
-    """
-    Converts Latitude/longitude  (WGS84, https://epsg.io/4326) position
-    into Gauss-Krüger rechts/hoch (east/north) coordinates
-    (DHDN / 3-degree Gauss-Kruger zone 3 (E-N), https://epsg.io/5677).
-
-    :param lat: latitude in degrees
-    :type: float
-    :param lon: longitude in degrees
-    :type: float
-    :return: "Rechtswert" (eastward coordinate) in m,
-        "Hochwert" (northward coordinate) in m
-    :rtype: float, float
-    """
-    transform = osr.CoordinateTransformation(LL, GK)
-    x, y, z = transform.TransformPoint(lat, lon)
-    return x, y
-
-# -------------------------------------------------------------------------
-
-def ut2ll(east: float, north:float) -> tuple[float, float]:
-    """
-    Converts UTM east/north coordinates
-    (ETRS89 / UTM zone 32N, https://epsg.io/25832)
-    into Latitude/longitude  (WGS84, https://epsg.io/4326) position.
-
-    :param east: eastward UTM coordinate in m
-    :type: float
-    :param north: northward UTM coordinate in m
-    :type: float
-    :return: latitude in degrees, longitude in degrees, altitude in meters
-    :rtype: float, float, float
-    """
-    transform = osr.CoordinateTransformation(UT, LL)
-    lat, lon, zz = transform.TransformPoint(east, north)
-    return lat, lon
-
-# -------------------------------------------------------------------------
-
-def ll2ut(lat: float, lon: float) -> tuple[float, float]:
-    """
-    Converts Latitude/longitude  (WGS84, https://epsg.io/4326) position
-    into UTM east/north coordinates
-    (ETRS89 / UTM zone 32N, https://epsg.io/25832)
-
-    :param lat: latitude in degrees
-    :type: float
-    :param lon: longitude in degrees
-    :type: float
-    :return: "easting" (eastward coordinate) in m,
-        "northing" (northward coordinate) in m
-    :rtype: float, float
-    """
-    transform = osr.CoordinateTransformation(LL, UT)
-    easting, nothing, zz = transform.TransformPoint(lat, lon)
-    return easting, nothing
-
-# -------------------------------------------------------------------------
-
-def math2geo(rot):
-    return rot * 180 / math.pi
-
-# -------------------------------------------------------------------------
-
-def geo2math(rot):
-    return rot * math.pi / 180
 
 # -------------------------------------------------------------------------
 

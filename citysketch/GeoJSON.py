@@ -5,17 +5,207 @@ Handles import/export and conversion between GeoJSON and CitySketch buildings
 
 import json
 import math
+import re
 import uuid
-from typing import List, Tuple, Optional, Set
+from typing import List, Tuple, Optional
+from pathlib import Path
 from dataclasses import dataclass
+
+
 import numpy as np
+from osgeo import osr
 
 from .Building import Building
+from .utils import get_epsg2ll
 
 # Module constants
 HEIGHT_TOLERANCE = 0.10  # 10% tolerance for height matching
 ANGLE_TOLERANCE = 15.0  # degrees for rectangle detection
 DISTANCE_TOLERANCE = 2.0  # meters for shape simplification
+
+
+def extract_epsg(crs_object):
+    """Extract EPSG code from various CRS string formats.
+    
+    Handles formats like:
+    - "EPSG::3857"
+    - "EPSG:3857"
+    - "urn:ogc:def:crs:EPSG:6.3:26986"
+    - "urn:ogc:def:crs:EPSG::4326"
+    - "https://www.opengis.net/def/crs/EPSG/0/4326"
+    
+    Returns:
+        int: The EPSG code, or None if not found
+    """
+    type = crs_object['type']
+    props = crs_object['properties']
+    if type != 'name':
+        print('Linked CRS are not implemented')
+
+    crs_string = props.get('name', "")
+    match = re.search(r'EPSG[:/]+(?:[\d.]+[:/]+)?(\d+)',
+                      crs_string, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+@dataclass
+class GeoJsonBuildingCache(list):
+    count = int
+    bounds = Tuple[float, float, float, float]
+
+    def __init__(self):
+        self._update_props()
+
+    def _update_props(self):
+        # Track bounds of loaded data
+        min_lat, min_lon = float('inf'), float('inf')
+        max_lat, max_lon = float('-inf'), float('-inf')
+        for building in self:
+            for lat, lon in building.coordinates:
+                min_lat = min(min_lat, lat)
+                max_lat = max(max_lat, lat)
+                min_lon = min(min_lon, lon)
+                max_lon = max(max_lon, lon)
+        self.bounds = min_lat, min_lon, max_lat, max_lon
+        self.count = len(self)
+
+    def load(self, filepaths: List[str|Path],
+             area: Tuple[float, float, float,float]|None = None):
+
+        if area is None:
+            view_lat1, view_lon1 = float('inf'), float('inf')
+            view_lat2, view_lon2 = float('-inf'), float('-inf')
+        else:
+            view_lat1, view_lon1, view_lat2, view_lon2 = area
+
+        loaded_count = 0
+        skipped_count = 0
+
+        for filepath in filepaths:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            if data.get('type') != 'FeatureCollection':
+                print(f"Skipping {filepath}: Not a FeatureCollection")
+                continue
+
+            # Check CRS - handle EPSG:3857 (Web Mercator)
+            epsg_id = extract_epsg(data.get('crs', {}))
+            if epsg_id is None:
+                raise ValueError(f"Could not extract EPSG "
+                                 f"code from {filepath}")
+            transformation = get_epsg2ll(epsg_id)
+
+
+            for feature in data.get('features', []):
+                if feature.get('type') != 'Feature':
+                    continue
+
+                props = feature.get('properties', {})
+                geom = feature.get('geometry', {})
+
+                if geom.get('type') not in ['Polygon', 'MultiPolygon']:
+                    continue
+
+                # Handle both Polygon and MultiPolygon
+                if geom.get('type') == 'Polygon':
+                    polygon_coords_list = [
+                        geom.get('coordinates', [[]])[0]]
+                else:  # MultiPolygon
+                    polygon_coords_list = [poly[0] for poly in
+                                           geom.get('coordinates', [])]
+
+                for polygon_coords in polygon_coords_list:
+                    if len(polygon_coords) < 3:
+                        continue
+
+                    # Convert coordinates
+                    building_coords = []
+                    for coord in polygon_coords[
+                        :-1]:  # Skip last (duplicate of first)
+                        if len(coord) < 2:
+                            continue
+                        lat, lon, _ = transformation.TransformPoint(coord[0],
+                                                           coord[1])
+                        building_coords.append((lat, lon))
+
+                    # Skip if not enough coordinates
+                    if len(building_coords) < 3:
+                        continue
+
+                    feature_id = str(
+                        props.get(
+                            'id',
+                            props.get('osm_id', str(uuid.uuid4()))))
+
+                    # Check if building intersects view
+                    if self.polygon_intersects_view(building_coords,
+                                                    view_lat1, view_lon1,
+                                                    view_lat2, view_lon2):
+                        # Check if identical to existing building
+                        height = float(props.get('height', 10.0))
+
+                        if id not in [x.feature_id for x in self]:
+                            # Get building ID from properties
+                            geojson_building = GeoJsonBuilding(
+                                coordinates=building_coords,
+                                height=height,
+                                feature_id=feature_id
+                            )
+
+                            # Add additional properties if needed
+                            if 'var' in props:
+                                geojson_building.height_variance = float(
+                                    props['var'])
+                            if 'region' in props:
+                                geojson_building.region = props[
+                                    'region']
+                            if 'source' in props:
+                                geojson_building.source = props[
+                                    'source']
+
+                            self.append(
+                                geojson_building)
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+        self._update_props()
+        return loaded_count, skipped_count
+
+    def polygon_intersects_view(self, coords, lat1, lon1, lat2, lon2):
+        """Check if polygon intersects with view rectangle"""
+        # Check if any vertex is in view
+        for x, y in coords:
+            if lat1 <= x <= lat2 and lon1 <= y <= lon2:
+                return True
+
+        # Check if polygon bounding box intersects view
+        if coords:
+            poly_x_min = min(c[0] for c in coords)
+            poly_x_max = max(c[0] for c in coords)
+            poly_y_min = min(c[1] for c in coords)
+            poly_y_max = max(c[1] for c in coords)
+
+            # Check for intersection
+            if not (poly_x_max < lat1 or poly_x_min > lat2 or
+                    poly_y_max < lon1 or poly_y_min > lon2):
+                return True
+
+        # Check if view center is in polygon
+        cx, cy = (lat1 + lat2) / 2, (lon1 + lon2) / 2
+        inside = False
+        n = len(coords)
+        j = n - 1
+        for i in range(n):
+            xi, yi = coords[i]
+            xj, yj = coords[j]
+            if ((yi > cy) != (yj > cy)) and (
+                    cx < (xj - xi) * (cy - yi) / (yj - yi) + xi):
+                inside = not inside
+            j = i
+
+        return inside
+
 
 
 @dataclass
@@ -45,20 +235,18 @@ class GeoJsonBuilding:
             j = i
         return inside
 
-    def intersects_rect(self, x1, y1, x2, y2):
+    def intersects_rect(self, lat1, lon1, lat2, lon2):
         """Check if polygon intersects with rectangle"""
         # Check if any vertex is inside rect
         for x, y in self.coordinates:
-            if x1 <= x <= x2 and y1 <= y <= y2:
+            if lat1 <= x <= lat2 and lon1 <= y <= lon2:
                 return True
         # Check if rect center is inside polygon
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        cx, cy = (lat1 + lat2) / 2, (lon1 + lon2) / 2
         return self.contains_point(cx, cy)
 
     def to_buildings(self, storey_height: float = 3.3):
         """Convert to one or more regular Building objects by fitting rectangles"""
-
-
         buildings = []
         rectangles = RectangleFitter.fit_multiple_rectangles(
             self.coordinates)
@@ -83,10 +271,10 @@ class GeoJsonBuilding:
 
             building = Building(
                 id=f"geojson_{self.feature_id}_{i}" if i > 0 else f"geojson_{self.feature_id}",
-                x1=cx - width / 2,
-                y1=cy - height_2d / 2,
-                x2=cx + width / 2,
-                y2=cy + height_2d / 2,
+                lat1=cx - width / 2,
+                lon1=cy - height_2d / 2,
+                lat2=cx + width / 2,
+                lon2=cy + height_2d / 2,
                 height=self.height,
                 stories=max(1, round(self.height / storey_height))
             )
@@ -293,20 +481,20 @@ class BuildingMerger:
     def _point_to_line_distance(point, line_start, line_end):
         """Calculate distance from point to line segment"""
         x0, y0 = point
-        x1, y1 = line_start
-        x2, y2 = line_end
+        lat1, lon1 = line_start
+        lat2, lon2 = line_end
 
-        dx = x2 - x1
-        dy = y2 - y1
+        dx = lat2 - lat1
+        dy = lon2 - lon1
 
         if dx == 0 and dy == 0:
-            return math.sqrt((x0 - x1) ** 2 + (y0 - y1) ** 2)
+            return math.sqrt((x0 - lat1) ** 2 + (y0 - lon1) ** 2)
 
-        t = ((x0 - x1) * dx + (y0 - y1) * dy) / (dx ** 2 + dy ** 2)
+        t = ((x0 - lat1) * dx + (y0 - lon1) * dy) / (dx ** 2 + dy ** 2)
         t = max(0, min(1, t))
 
-        closest_x = x1 + t * dx
-        closest_y = y1 + t * dy
+        closest_x = lat1 + t * dx
+        closest_y = lon1 + t * dy
 
         return math.sqrt((x0 - closest_x) ** 2 + (y0 - closest_y) ** 2)
 
@@ -314,16 +502,16 @@ class BuildingMerger:
     def _project_point_on_line(point, line_start, line_end):
         """Project point onto line and return parameter t"""
         x0, y0 = point
-        x1, y1 = line_start
-        x2, y2 = line_end
+        lat1, lon1 = line_start
+        lat2, lon2 = line_end
 
-        dx = x2 - x1
-        dy = y2 - y1
+        dx = lat2 - lat1
+        dy = lon2 - lon1
 
         if dx == 0 and dy == 0:
             return 0
 
-        return ((x0 - x1) * dx + (y0 - y1) * dy) / (dx ** 2 + dy ** 2)
+        return ((x0 - lat1) * dx + (y0 - lon1) * dy) / (dx ** 2 + dy ** 2)
 
     @staticmethod
     def buildings_intersect(b1, b2) -> bool:
@@ -411,7 +599,7 @@ class BuildingMerger:
         weighted_height = 0
 
         for b in buildings:
-            area = abs((b.x2 - b.x1) * (b.y2 - b.y1))
+            area = abs((b.lat2 - b.lat1) * (b.lon2 - b.lon1))
             total_area += area
             weighted_height += b.height * area
 
@@ -499,4 +687,5 @@ class BuildingMerger:
         """Counter-clockwise test"""
         return (p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (
                     p3[0] - p1[0])
+
 
