@@ -254,14 +254,17 @@ class GeoJsonBuilding:
                           If None, coordinates are used as-is.
         """
         buildings = []
-        rectangles = RectangleFitter.fit_multiple_rectangles(
-            self.coordinates)
+        
+        # Convert to world coordinates BEFORE rectangle fitting
+        if geo_to_world:
+            world_coords = [geo_to_world(lat, lon) for lat, lon in self.coordinates]
+        else:
+            world_coords = self.coordinates
+        
+        rectangles = RectangleFitter.fit_multiple_rectangles(world_coords)
 
         for i, rect_coords in enumerate(rectangles):
-            # Convert coordinates if transformer provided
-            if geo_to_world:
-                rect_coords = [geo_to_world(lat, lon) for lat, lon in
-                               rect_coords]
+            # rect_coords are already in world coordinates now
 
             # Calculate rotation from first edge
             dx = rect_coords[1][0] - rect_coords[0][0]

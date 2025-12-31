@@ -975,10 +975,14 @@ class MapCanvas(wx.Panel):
 
         progress_dialog.Destroy()
 
-        # Remove imported buildings
+        # Remove imported buildings from geojson list
         for building in imported:
             if building in self.geojson_buildings:
                 self.geojson_buildings.remove(building)
+
+        # After import, hide GeoJSON buildings and update button
+        self.geojson_mode = 'hidden'
+        self.main_frame.geojson_btn.SetLabel("GeoJSON: Show")
 
         # Update UI
         self.Refresh()
