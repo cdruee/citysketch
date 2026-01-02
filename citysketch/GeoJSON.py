@@ -17,6 +17,13 @@ from osgeo import osr
 
 from .Building import Building
 from .utils import get_epsg2ll
+from .building_simplification import (
+    BuildingSimplifier,
+    RectangularPartitioner,
+    smallest_enclosing_rectangle,
+    rotate_polygon,
+    Rectangle
+)
 
 # Module constants
 HEIGHT_TOLERANCE = 0.10  # 10% tolerance for height matching
@@ -405,15 +412,71 @@ class RectangleFitter:
 
     @staticmethod
     def fit_multiple_rectangles(coordinates: List[Tuple[float, float]],
-                                max_rectangles: int = 3) -> List[
+                                max_rectangles: int = 5) -> List[
         List[Tuple[float, float]]]:
-        """Fit polygon with multiple rectangles if it's L-shaped, T-shaped, etc."""
+        """
+        Fit polygon with multiple rectangles for L-shaped, T-shaped, etc. buildings.
+        
+        Uses the Ferrari-Sankar-Sklansky algorithm for minimal rectangular
+        partitioning combined with Bayer's building simplification.
+        
+        Args:
+            coordinates: List of (x, y) polygon vertices
+            max_rectangles: Maximum number of rectangles to return
+            
+        Returns:
+            List of rectangle corner lists, each with 4 corners
+        """
+        if len(coordinates) < 4:
+            return [RectangleFitter.simplify_to_rectangle(coordinates)]
+        
+        # Check if already approximately rectangular
         if RectangleFitter.is_approximately_rectangular(coordinates):
             return [RectangleFitter.simplify_to_rectangle(coordinates)]
-
-        # For complex shapes, return single best-fit rectangle for now
-        # TODO: Implement polygon decomposition for L-shaped, T-shaped buildings
-        return [RectangleFitter.simplify_to_rectangle(coordinates)]
+        
+        # Step 1: Find the building's principal orientation
+        rect, angle = smallest_enclosing_rectangle(coordinates)
+        
+        # Step 2: Rotate to axis-aligned position
+        centroid = (
+            sum(p[0] for p in coordinates) / len(coordinates),
+            sum(p[1] for p in coordinates) / len(coordinates)
+        )
+        rotated_coords = rotate_polygon(coordinates, -angle, centroid)
+        
+        # Step 3: Simplify to rectilinear shape
+        simplifier = BuildingSimplifier(sigma_max=DISTANCE_TOLERANCE)
+        simplified = simplifier.simplify(rotated_coords)
+        
+        # Step 4: Partition into minimal rectangles
+        partitioner = RectangularPartitioner(tolerance=0.1)
+        rectangles = partitioner.partition(simplified)
+        
+        if not rectangles:
+            # Fallback to single rectangle
+            return [RectangleFitter.simplify_to_rectangle(coordinates)]
+        
+        # Limit number of rectangles
+        if len(rectangles) > max_rectangles:
+            # Sort by area and keep largest ones
+            rectangles = sorted(rectangles, key=lambda r: r.area, reverse=True)
+            rectangles = rectangles[:max_rectangles]
+        
+        # Step 5: Convert rectangles back to corner lists and rotate back
+        result = []
+        for rect in rectangles:
+            # Get corners of axis-aligned rectangle
+            corners = [
+                (rect.x_min, rect.y_min),
+                (rect.x_max, rect.y_min),
+                (rect.x_max, rect.y_max),
+                (rect.x_min, rect.y_max)
+            ]
+            # Rotate back to original orientation
+            rotated_corners = rotate_polygon(corners, angle, centroid)
+            result.append(rotated_corners)
+        
+        return result if result else [RectangleFitter.simplify_to_rectangle(coordinates)]
 
 
 class BuildingMerger:

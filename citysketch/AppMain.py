@@ -941,15 +941,15 @@ class MapCanvas(wx.Panel):
                 if cancelled.is_set():
                     break
 
-                # Convert building
-                building = geojson_building.to_building(
-                    geo_to_world=self.geo_to_world)
+                # Convert Geojson building to one or more rectangular buildings
+                for building in geojson_building.to_buildings(
+                    geo_to_world=self.geo_to_world):
 
-                # Update UI in main thread
-                wx.CallAfter(lambda b=building, gb=geojson_building: (
-                    self.buildings.append(b),
-                    imported.append(gb)
-                ))
+                    # Update UI in main thread
+                    wx.CallAfter(lambda b=building, gb=geojson_building: (
+                        self.buildings.append(b),
+                        imported.append(gb)
+                    ))
 
                 # Update progress in main thread
                 wx.CallAfter(progress_dialog.update_progress, i + 1)
