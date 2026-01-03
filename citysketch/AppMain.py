@@ -4,7 +4,8 @@ CitySketch Application
 A wxPython GUI application for creating and editing CityJSON files with building data.
 """
 
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, field
 from enum import Enum
 import io
 import json
@@ -51,6 +52,151 @@ APP_MINOR = '.'.join(str(x) for x in cast(Tuple, __version_tuple__)[0:2])
 FEXT = '.csp'
 
 print(f"Starting {APP_NAME} {APP_MINOR} (v{APP_VERSION})")
+
+# =========================================================================
+# Undo/Redo System
+# =========================================================================
+
+@dataclass
+class UndoState:
+    """
+    Represents a snapshot of the building state for undo/redo.
+    
+    :param buildings: Deep copy of all buildings at this state
+    :param description: Human-readable description of the action
+    """
+    buildings: List[Building]
+    description: str = ""
+
+
+class UndoManager:
+    """
+    Manages undo/redo operations for building modifications.
+    
+    Uses a simple state-snapshot approach where each undo state contains
+    a complete copy of all buildings. This is memory-intensive but simple
+    and robust.
+    
+    :param max_undo_levels: Maximum number of undo states to keep (default 50)
+    """
+    
+    def __init__(self, max_undo_levels: int = 50):
+        self.max_undo_levels = max_undo_levels
+        self.undo_stack: List[UndoState] = []
+        self.redo_stack: List[UndoState] = []
+        self._in_undo_redo = False
+    
+    def save_state(self, buildings: List[Building], description: str = ""):
+        """
+        Save current state to the undo stack.
+        
+        Call this BEFORE making changes to capture the previous state.
+        
+        :param buildings: Current list of buildings (will be deep copied)
+        :param description: Description of the action about to be performed
+        """
+        if self._in_undo_redo:
+            return
+            
+        # Deep copy buildings
+        buildings_copy = [self._copy_building(b) for b in buildings]
+        state = UndoState(buildings=buildings_copy, description=description)
+        
+        self.undo_stack.append(state)
+        
+        # Clear redo stack when new action is performed
+        self.redo_stack.clear()
+        
+        # Limit undo stack size
+        while len(self.undo_stack) > self.max_undo_levels:
+            self.undo_stack.pop(0)
+    
+    def undo(self, current_buildings: List[Building]) -> Optional[List[Building]]:
+        """
+        Undo the last action.
+        
+        :param current_buildings: Current list of buildings (saved to redo stack)
+        :returns: Previous list of buildings, or None if nothing to undo
+        """
+        if not self.undo_stack:
+            return None
+        
+        self._in_undo_redo = True
+        try:
+            # Save current state to redo stack
+            current_copy = [self._copy_building(b) for b in current_buildings]
+            # Get description from the state we're undoing
+            desc = self.undo_stack[-1].description if self.undo_stack else ""
+            self.redo_stack.append(UndoState(buildings=current_copy, description=desc))
+            
+            # Pop and return previous state
+            previous_state = self.undo_stack.pop()
+            return [self._copy_building(b) for b in previous_state.buildings]
+        finally:
+            self._in_undo_redo = False
+    
+    def redo(self, current_buildings: List[Building]) -> Optional[List[Building]]:
+        """
+        Redo the last undone action.
+        
+        :param current_buildings: Current list of buildings (saved to undo stack)
+        :returns: Next list of buildings, or None if nothing to redo
+        """
+        if not self.redo_stack:
+            return None
+        
+        self._in_undo_redo = True
+        try:
+            # Save current state to undo stack
+            current_copy = [self._copy_building(b) for b in current_buildings]
+            # Get description from the state we're redoing
+            desc = self.redo_stack[-1].description if self.redo_stack else ""
+            self.undo_stack.append(UndoState(buildings=current_copy, description=desc))
+            
+            # Pop and return next state
+            next_state = self.redo_stack.pop()
+            return [self._copy_building(b) for b in next_state.buildings]
+        finally:
+            self._in_undo_redo = False
+    
+    def can_undo(self) -> bool:
+        """Check if undo is available."""
+        return len(self.undo_stack) > 0
+    
+    def can_redo(self) -> bool:
+        """Check if redo is available."""
+        return len(self.redo_stack) > 0
+    
+    def get_undo_description(self) -> str:
+        """Get description of action that would be undone."""
+        if self.undo_stack:
+            return self.undo_stack[-1].description
+        return ""
+    
+    def get_redo_description(self) -> str:
+        """Get description of action that would be redone."""
+        if self.redo_stack:
+            return self.redo_stack[-1].description
+        return ""
+    
+    def clear(self):
+        """Clear all undo/redo history."""
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+    
+    @staticmethod
+    def _copy_building(building: Building) -> Building:
+        """Create a deep copy of a building."""
+        return Building(
+            id=building.id,
+            x1=building.x1,
+            y1=building.y1,
+            a=building.a,
+            b=building.b,
+            height=building.height,
+            storeys=building.storeys,
+            rotation=building.rotation
+        )
 
 # =========================================================================
 
@@ -619,6 +765,9 @@ class MapCanvas(wx.Panel):
         self.geo_center_lon = lon
         self.geo_zoom = self.BASE_GEO_ZOOM  # Tile zoom level
 
+        # Undo/Redo manager
+        self.undo_manager = UndoManager(max_undo_levels=50)
+
         # Interaction state
         self.mouse_down = False
         self.drag_start = None
@@ -628,6 +777,7 @@ class MapCanvas(wx.Panel):
         self.floating_rect = None
         self.selection_rect_start = None
         self.current_mouse_pos = None
+        self._drag_state_saved = False  # Track if we saved state for current drag
 
         # Setup
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
@@ -945,6 +1095,12 @@ class MapCanvas(wx.Panel):
                           wx.OK | wx.ICON_WARNING)
             return 0
 
+        # Save state before import
+        self.undo_manager.save_state(
+            self.buildings, 
+            f"Import {len(selected)} building(s) from GeoJSON"
+        )
+
         progress_dialog = ImportProgressDialog(self.parent, len(selected))
 
         imported = []
@@ -998,6 +1154,9 @@ class MapCanvas(wx.Panel):
         # After import, hide GeoJSON buildings and update button
         self.geojson_mode = 'hidden'
         self.main_frame.geojson_btn.SetLabel("GeoJSON: Show")
+
+        # Update undo menu state
+        self._update_undo_menu_state()
 
         # Update UI
         self.Refresh()
@@ -1653,6 +1812,9 @@ class MapCanvas(wx.Panel):
                     "Move to draw, press Ctrl to rotate, click to finish")
             else:
                 # 2nd click defines 2n corner (upper right) and adds bldg.
+                # Save state before adding building
+                self.undo_manager.save_state(self.buildings, "Add building")
+                
                 x1, y1 = self.floating_rect.anchor
                 building = Building(
                     id=str(uuid.uuid4()),
@@ -1668,6 +1830,7 @@ class MapCanvas(wx.Panel):
                 self.buildings.append(building)
                 self.floating_rect = None
                 self.mode = SelectMode.NORMAL
+                self._update_undo_menu_state()
                 self.statusbar.SetStatusText(
                     f"Added building #{len(self.buildings)}")
                 self.Refresh()
@@ -1694,12 +1857,16 @@ class MapCanvas(wx.Panel):
                     wx, wy, 10 / self.zoom_level)
                 if corner_idx is not None:
                     if ctrl_pressed:
-                        # Rotation mode
+                        # Rotation mode - save state before rotation
+                        self.undo_manager.save_state(self.buildings, "Rotate building(s)")
+                        self._drag_state_saved = True
                         self.drag_corner_index = corner_idx
                         self.drag_mode = 'rotate'
                         return
                     else:
-                        # Normal scaling mode
+                        # Normal scaling mode - save state before scaling
+                        self.undo_manager.save_state(self.buildings, "Scale building(s)")
+                        self._drag_state_saved = True
                         self.drag_corner_index = corner_idx
                         self.drag_mode = 'scale'
                         return
@@ -1729,6 +1896,9 @@ class MapCanvas(wx.Panel):
                         else:
                             # select solely this building
                             self.selected_buildings = BuildingGroup([clicked_building])
+                    # Save state before potential move
+                    self.undo_manager.save_state(self.buildings, "Move building(s)")
+                    self._drag_state_saved = True
                     self.drag_mode = 'translate'
                 else:
                     # no building was clicked
@@ -1758,6 +1928,11 @@ class MapCanvas(wx.Panel):
             self.selection_rect_start = None
             self.Refresh()
 
+        # Update undo menu state if we completed a drag operation
+        if self._drag_state_saved:
+            self._update_undo_menu_state()
+            self._drag_state_saved = False
+        
         self.drag_corner_index = None
         self.drag_mode = None
         self.drag_start = None
@@ -1830,17 +2005,90 @@ class MapCanvas(wx.Panel):
 
     def set_building_stories(self, stories: int):
         """Set stories for selected buildings"""
+        if not self.selected_buildings.buildings:
+            return
+        
+        # Save state before changing height
+        self.undo_manager.save_state(
+            self.buildings,
+            f"Set height to {stories} stories"
+        )
+        
         for building in self.selected_buildings:
             building.storeys = stories
             building.height = stories * self.storey_height
         self.Refresh()
+        self._update_undo_menu_state()
 
     def delete_selected_buildings(self):
         """Delete selected buildings"""
+        if not self.selected_buildings.buildings:
+            return
+        
+        # Save state before deletion
+        count = len(self.selected_buildings.buildings)
+        self.undo_manager.save_state(
+            self.buildings, 
+            f"Delete {count} building(s)"
+        )
+        
         for b in self.selected_buildings.buildings.copy():
             self.selected_buildings.remove(b)
             self.buildings = [x for x in self.buildings if x != b]
         self.Refresh()
+        self._update_undo_menu_state()
+
+    def undo(self) -> bool:
+        """
+        Undo the last action.
+        
+        :returns: True if undo was performed, False if nothing to undo
+        """
+        if not self.undo_manager.can_undo():
+            return False
+        
+        previous_buildings = self.undo_manager.undo(self.buildings)
+        if previous_buildings is not None:
+            self.buildings = previous_buildings
+            self.selected_buildings = BuildingGroup([])
+            self.Refresh()
+            self._update_undo_menu_state()
+            return True
+        return False
+    
+    def redo(self) -> bool:
+        """
+        Redo the last undone action.
+        
+        :returns: True if redo was performed, False if nothing to redo
+        """
+        if not self.undo_manager.can_redo():
+            return False
+        
+        next_buildings = self.undo_manager.redo(self.buildings)
+        if next_buildings is not None:
+            self.buildings = next_buildings
+            self.selected_buildings = BuildingGroup([])
+            self.Refresh()
+            self._update_undo_menu_state()
+            return True
+        return False
+    
+    def _update_undo_menu_state(self):
+        """Update the enabled state and labels of undo/redo menu items."""
+        if self.main_frame:
+            self.main_frame.update_undo_menu_state()
+
+    def save_undo_state(self, description: str = ""):
+        """
+        Manually save current state to undo stack.
+        
+        Call this before making changes that should be undoable.
+        
+        :param description: Description of the action about to be performed
+        """
+        self.undo_manager.save_state(self.buildings, description)
+        self._update_undo_menu_state()
 
     def zoom_view(self, factor, apex_x=None, apex_y=None):
 
@@ -2012,6 +2260,14 @@ class MainFrame(wx.Frame):
 
         # Edit menu
         edit_menu = wx.Menu()
+        
+        # Undo/Redo items at the top
+        self.undo_item = edit_menu.Append(wx.ID_UNDO, "&Undo\tCtrl+Z",
+                                          "Undo the last action")
+        self.redo_item = edit_menu.Append(wx.ID_REDO, "&Redo\tCtrl+Y",
+                                          "Redo the last undone action")
+        edit_menu.AppendSeparator()
+        
         basemap_item = edit_menu.Append(wx.ID_ANY, "Select &Basemap",
                                         "Choose a basemap")
         zoom_item = edit_menu.Append(wx.ID_ANY,
@@ -2070,6 +2326,11 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_about, id=wx.ID_ABOUT)
         self.Bind(wx.EVT_MENU, self.on_color_settings,
                   id=color_settings_item.GetId())
+        
+        # Bind undo/redo events
+        self.Bind(wx.EVT_MENU, self.on_undo, id=wx.ID_UNDO)
+        self.Bind(wx.EVT_MENU, self.on_redo, id=wx.ID_REDO)
+        
         # optionals
         if GEOTIFF_SUPPORT:
             self.Bind(wx.EVT_MENU, self.on_load_geotiff,
@@ -2089,6 +2350,10 @@ class MainFrame(wx.Frame):
         if OPENGL_SUPPORT:
             self.Bind(wx.EVT_MENU, self.on_show_3d_view,
                       id=view_3d_item.GetId())
+        
+        # Initialize undo/redo menu state (disabled until there are actions)
+        self.undo_item.Enable(False)
+        self.redo_item.Enable(False)
 
     def create_toolbar(self):
         """Create the toolbar"""
@@ -2179,7 +2444,12 @@ class MainFrame(wx.Frame):
             self.canvas.set_building_stories(stories)
             self.SetStatusText(
                 f"Set selected buildings to {stories} stories")
-        # zoom conrol
+        # Undo/Redo
+        elif event.ControlDown() and key == ord('Z'):
+            self.on_undo(None)
+        elif event.ControlDown() and key == ord('Y'):
+            self.on_redo(None)
+        # zoom control
         elif event.ControlDown() and key in [ord('0'), wx.WXK_NUMPAD0]:
             # Check for Ctrl+0
             self.on_zoom_to_buildings(None)
@@ -2243,6 +2513,55 @@ class MainFrame(wx.Frame):
             self.SetStatusText(
                 f"Set height to {new_stories} stories ({new_height:.1f}m)")
         dialog.Destroy()
+
+    def on_undo(self, event):
+        """Undo the last action"""
+        if self.canvas.undo():
+            desc = self.canvas.undo_manager.get_undo_description()
+            if desc:
+                self.SetStatusText(f"Undid: {desc}")
+            else:
+                self.SetStatusText("Undo")
+        else:
+            self.SetStatusText("Nothing to undo")
+
+    def on_redo(self, event):
+        """Redo the last undone action"""
+        if self.canvas.redo():
+            desc = self.canvas.undo_manager.get_redo_description()
+            if desc:
+                self.SetStatusText(f"Redid: {desc}")
+            else:
+                self.SetStatusText("Redo")
+        else:
+            self.SetStatusText("Nothing to redo")
+
+    def update_undo_menu_state(self):
+        """Update the enabled state of undo/redo menu items"""
+        can_undo = self.canvas.undo_manager.can_undo()
+        can_redo = self.canvas.undo_manager.can_redo()
+        
+        self.undo_item.Enable(can_undo)
+        self.redo_item.Enable(can_redo)
+        
+        # Update menu item labels with descriptions
+        if can_undo:
+            desc = self.canvas.undo_manager.get_undo_description()
+            if desc:
+                self.undo_item.SetItemLabel(f"&Undo {desc}\tCtrl+Z")
+            else:
+                self.undo_item.SetItemLabel("&Undo\tCtrl+Z")
+        else:
+            self.undo_item.SetItemLabel("&Undo\tCtrl+Z")
+        
+        if can_redo:
+            desc = self.canvas.undo_manager.get_redo_description()
+            if desc:
+                self.redo_item.SetItemLabel(f"&Redo {desc}\tCtrl+Y")
+            else:
+                self.redo_item.SetItemLabel("&Redo\tCtrl+Y")
+        else:
+            self.redo_item.SetItemLabel("&Redo\tCtrl+Y")
 
     def on_delete(self, event):
         """Delete selected buildings"""
