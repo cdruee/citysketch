@@ -1,6 +1,33 @@
 """
-GeoJSON module for CityJSON Creator
-Handles import/export and conversion between GeoJSON and CitySketch buildings
+GeoJSON Module for CitySketch
+=============================
+
+Handles import/export and conversion between GeoJSON and CitySketch buildings.
+
+This module provides functionality for:
+
+- Loading building footprints from GeoJSON files
+- Converting GeoJSON polygons to CitySketch Building objects
+- Fitting rectangles to irregular polygon shapes
+- Merging adjacent buildings into single footprints
+- Exporting CitySketch buildings back to GeoJSON format
+
+.. rubric:: Module Constants
+
+.. data:: HEIGHT_TOLERANCE
+   :value: 0.10
+
+   Tolerance (10%) for height matching when merging buildings.
+
+.. data:: ANGLE_TOLERANCE
+   :value: 15.0
+
+   Tolerance in degrees for rectangle detection.
+
+.. data:: DISTANCE_TOLERANCE
+   :value: 2.0
+
+   Tolerance in meters for shape simplification.
 """
 
 import json
@@ -32,17 +59,27 @@ DISTANCE_TOLERANCE = 2.0  # meters for shape simplification
 
 
 def extract_epsg(crs_object):
-    """Extract EPSG code from various CRS string formats.
+    """
+    Extract EPSG code from various CRS string formats.
     
     Handles formats like:
-    - "EPSG::3857"
-    - "EPSG:3857"
-    - "urn:ogc:def:crs:EPSG:6.3:26986"
-    - "urn:ogc:def:crs:EPSG::4326"
-    - "https://www.opengis.net/def/crs/EPSG/0/4326"
     
-    Returns:
-        int: The EPSG code, or None if not found
+    - ``"EPSG::3857"``
+    - ``"EPSG:3857"``
+    - ``"urn:ogc:def:crs:EPSG:6.3:26986"``
+    - ``"urn:ogc:def:crs:EPSG::4326"``
+    - ``"https://www.opengis.net/def/crs/EPSG/0/4326"``
+    
+    :param crs_object: CRS object from GeoJSON containing 'type' and 'properties' keys.
+    :type crs_object: dict
+    :returns: The EPSG code, or None if not found.
+    :rtype: int or None
+    
+    .. rubric:: Example
+    
+    >>> crs = {'type': 'name', 'properties': {'name': 'EPSG:4326'}}
+    >>> extract_epsg(crs)
+    4326
     """
     type = crs_object['type']
     props = crs_object['properties']
@@ -57,13 +94,26 @@ def extract_epsg(crs_object):
 
 @dataclass
 class GeoJsonBuildingCache(list):
+    """
+    Cache for storing and managing GeoJSON building data.
+    
+    Extends list to provide additional functionality for loading GeoJSON files
+    and tracking the bounds of loaded building data.
+    
+    :ivar count: Number of buildings in the cache.
+    :vartype count: int
+    :ivar bounds: Bounding box as (min_lat, min_lon, max_lat, max_lon).
+    :vartype bounds: Tuple[float, float, float, float]
+    """
     count = int
     bounds = Tuple[float, float, float, float]
 
     def __init__(self):
+        """Initialize an empty building cache."""
         self._update_props()
 
     def _update_props(self):
+        """Update count and bounds properties based on current contents."""
         # Track bounds of loaded data
         min_lat, min_lon = float('inf'), float('inf')
         max_lat, max_lon = float('-inf'), float('-inf')
@@ -78,6 +128,24 @@ class GeoJsonBuildingCache(list):
 
     def load(self, filepaths: List[str|Path],
              area: Tuple[float, float, float,float]|None = None):
+        """
+        Load buildings from one or more GeoJSON files.
+        
+        :param filepaths: List of paths to GeoJSON files to load.
+        :type filepaths: List[str or Path]
+        :param area: Optional bounding box to filter buildings.
+            Format: (lat1, lon1, lat2, lon2). If None, all buildings are loaded.
+        :type area: Tuple[float, float, float, float] or None
+        :returns: Tuple of (loaded_count, skipped_count).
+        :rtype: Tuple[int, int]
+        :raises ValueError: If EPSG code cannot be extracted from a file.
+        
+        .. rubric:: Example
+        
+        >>> cache = GeoJsonBuildingCache()
+        >>> loaded, skipped = cache.load(['buildings.geojson'])
+        >>> print(f"Loaded {loaded} buildings, skipped {skipped}")
+        """
 
         if area is None:
             view_lat1, view_lon1 = float('inf'), float('inf')
@@ -180,7 +248,22 @@ class GeoJsonBuildingCache(list):
         return loaded_count, skipped_count
 
     def polygon_intersects_view(self, coords, lat1, lon1, lat2, lon2):
-        """Check if polygon intersects with view rectangle"""
+        """
+        Check if a polygon intersects with a view rectangle.
+        
+        :param coords: List of (lat, lon) coordinates defining the polygon.
+        :type coords: List[Tuple[float, float]]
+        :param lat1: Minimum latitude of view rectangle.
+        :type lat1: float
+        :param lon1: Minimum longitude of view rectangle.
+        :type lon1: float
+        :param lat2: Maximum latitude of view rectangle.
+        :type lat2: float
+        :param lon2: Maximum longitude of view rectangle.
+        :type lon2: float
+        :returns: True if polygon intersects the view rectangle.
+        :rtype: bool
+        """
         # Check if any vertex is in view
         for x, y in coords:
             if lat1 <= x <= lat2 and lon1 <= y <= lon2:
@@ -217,7 +300,33 @@ class GeoJsonBuildingCache(list):
 
 @dataclass
 class GeoJsonBuilding:
-    """Temporary building from GeoJSON for preview"""
+    """
+    Represents a building loaded from GeoJSON for preview and import.
+    
+    This class stores the polygon coordinates and metadata for a building
+    footprint loaded from a GeoJSON file. Buildings can be selected for
+    import and converted to CitySketch :class:`Building` objects.
+    
+    :param coordinates: List of (lat, lon) tuples defining the polygon outline.
+    :type coordinates: List[Tuple[float, float]]
+    :param height: Building height in meters.
+    :type height: float
+    :param feature_id: Unique identifier from the GeoJSON feature.
+    :type feature_id: str
+    :param selected: Whether the building is selected for import. 
+        Selected buildings are displayed in green, unselected in red.
+    :type selected: bool
+    :param imported: Whether the building has been imported.
+    :type imported: bool
+    :param height_variance: Optional variance in height estimation.
+    :type height_variance: float or None
+    :param region: Optional region identifier.
+    :type region: str or None
+    :param source: Optional data source identifier.
+    :type source: str or None
+    
+    .. seealso:: :meth:`to_building`, :meth:`to_buildings`
+    """
     coordinates: List[Tuple[float, float]]  # List of (x, y) tuples
     height: float
     feature_id: str
@@ -229,7 +338,16 @@ class GeoJsonBuilding:
     source: Optional[str] = None
 
     def contains_point(self, x: float, y: float) -> bool:
-        """Check if a point is inside the polygon using ray casting"""
+        """
+        Check if a point is inside the polygon using ray casting algorithm.
+        
+        :param x: X-coordinate (latitude) of the point.
+        :type x: float
+        :param y: Y-coordinate (longitude) of the point.
+        :type y: float
+        :returns: True if the point is inside the polygon.
+        :rtype: bool
+        """
         n = len(self.coordinates)
         inside = False
         j = n - 1
@@ -243,7 +361,20 @@ class GeoJsonBuilding:
         return inside
 
     def intersects_rect(self, lat1, lon1, lat2, lon2):
-        """Check if polygon intersects with rectangle"""
+        """
+        Check if the polygon intersects with a rectangle.
+        
+        :param lat1: Minimum latitude of rectangle.
+        :type lat1: float
+        :param lon1: Minimum longitude of rectangle.
+        :type lon1: float
+        :param lat2: Maximum latitude of rectangle.
+        :type lat2: float
+        :param lon2: Maximum longitude of rectangle.
+        :type lon2: float
+        :returns: True if polygon intersects the rectangle.
+        :rtype: bool
+        """
         # Check if any vertex is inside rect
         for x, y in self.coordinates:
             if lat1 <= x <= lat2 and lon1 <= y <= lon2:
@@ -253,12 +384,27 @@ class GeoJsonBuilding:
         return self.contains_point(cx, cy)
 
     def to_buildings(self, storey_height: float = 3.3, geo_to_world=None):
-        """Convert to one or more regular Building objects by fitting rectangles.
-
-        Args:
-            storey_height: Height per storey in meters
-            geo_to_world: Function to convert (lat, lon) to world coordinates (x, y).
-                          If None, coordinates are used as-is.
+        """
+        Convert to one or more CitySketch Building objects by fitting rectangles.
+        
+        For complex polygon shapes (L-shaped, T-shaped, etc.), multiple
+        rectangles may be fitted using the Ferrari-Sankar-Sklansky algorithm.
+        
+        :param storey_height: Height per storey in meters for calculating
+            storey count. Default is 3.3m.
+        :type storey_height: float
+        :param geo_to_world: Optional function to convert (lat, lon) to 
+            world coordinates (x, y). If None, coordinates are used as-is.
+        :type geo_to_world: callable or None
+        :returns: List of Building objects fitted to the polygon.
+        :rtype: List[Building]
+        
+        .. seealso::
+        
+            :meth:`to_building`
+                Convenience method returning only the first building.
+            :class:`RectangleFitter`
+                Used internally for rectangle fitting.
         """
         buildings = []
         
@@ -307,28 +453,55 @@ class GeoJsonBuilding:
         return buildings
 
     def to_building(self, storey_height: float = 3.3, geo_to_world=None):
-        """Convert to a single Building object (returns first fitted rectangle).
+        """
+        Convert to a single CitySketch Building object.
         
-        Args:
-            storey_height: Height per storey in meters
-            geo_to_world: Function to convert (lat, lon) to world coordinates (x, y).
+        This is a convenience method that returns only the first (and usually
+        largest) fitted rectangle. For complex polygons that decompose into
+        multiple buildings, use :meth:`to_buildings` instead.
         
-        Returns:
-            Building: The first building from the fitted rectangles, or None if fitting fails.
+        :param storey_height: Height per storey in meters. Default is 3.3m.
+        :type storey_height: float
+        :param geo_to_world: Optional coordinate transformation function.
+        :type geo_to_world: callable or None
+        :returns: The first fitted Building, or None if fitting fails.
+        :rtype: Building or None
+        
+        .. seealso:: :meth:`to_buildings`
         """
         buildings = self.to_buildings(storey_height, geo_to_world=geo_to_world)
         return buildings[0] if buildings else None
 
 
 class RectangleFitter:
-    """Fit irregular polygons with rectangles"""
+    """
+    Fit irregular polygons with one or more rectangles.
+    
+    Provides static methods for fitting rectangles to building footprint
+    polygons. Uses PCA for simple shapes and the Ferrari-Sankar-Sklansky
+    algorithm [Ferrari1984]_ for complex L-shaped or T-shaped buildings.
+    
+    .. seealso::
+    
+        :mod:`building_simplification`
+            Module containing the underlying algorithms.
+    """
 
     @staticmethod
     def fit_single_rectangle(coordinates: List[Tuple[float, float]]) -> \
     Tuple[float, float, float, float, float]:
         """
-        Fit a single rectangle to polygon using PCA for orientation.
-        Returns: (cx, cy, width, height, angle)
+        Fit a single rectangle to a polygon using PCA for orientation.
+        
+        Uses Principal Component Analysis to find the optimal orientation
+        and then computes the bounding box in that orientation.
+        
+        :param coordinates: List of (x, y) polygon vertices.
+        :type coordinates: List[Tuple[float, float]]
+        :returns: Tuple of (cx, cy, width, height, angle) where cx, cy is the
+            center, width and height are dimensions, and angle is rotation
+            in radians.
+        :rtype: Tuple[float, float, float, float, float]
         """
         points = np.array(coordinates)
         centroid = np.mean(points, axis=0)
@@ -365,7 +538,17 @@ class RectangleFitter:
     @staticmethod
     def is_approximately_rectangular(
             coordinates: List[Tuple[float, float]]) -> bool:
-        """Check if polygon is approximately rectangular"""
+        """
+        Check if a polygon is approximately rectangular.
+        
+        Analyzes the interior angles to determine if the polygon has
+        mostly right angles (within :data:`ANGLE_TOLERANCE`).
+        
+        :param coordinates: List of (x, y) polygon vertices.
+        :type coordinates: List[Tuple[float, float]]
+        :returns: True if the polygon is approximately rectangular.
+        :rtype: bool
+        """
         if len(coordinates) < 4 or len(coordinates) > 8:
             return len(coordinates) <= 6
 
@@ -391,7 +574,14 @@ class RectangleFitter:
     @staticmethod
     def simplify_to_rectangle(coordinates: List[Tuple[float, float]]) -> \
     List[Tuple[float, float]]:
-        """Simplify an approximately rectangular polygon to 4 corners"""
+        """
+        Simplify an approximately rectangular polygon to exactly 4 corners.
+        
+        :param coordinates: List of (x, y) polygon vertices.
+        :type coordinates: List[Tuple[float, float]]
+        :returns: List of 4 corner points in order.
+        :rtype: List[Tuple[float, float]]
+        """
         cx, cy, width, height, angle = RectangleFitter.fit_single_rectangle(
             coordinates)
 
@@ -415,17 +605,30 @@ class RectangleFitter:
                                 max_rectangles: int = 5) -> List[
         List[Tuple[float, float]]]:
         """
-        Fit polygon with multiple rectangles for L-shaped, T-shaped, etc. buildings.
+        Fit a polygon with multiple rectangles for complex shapes.
         
-        Uses the Ferrari-Sankar-Sklansky algorithm for minimal rectangular
-        partitioning combined with Bayer's building simplification.
+        For L-shaped, T-shaped, and other complex building footprints,
+        this method decomposes the polygon into multiple rectangles using
+        the Ferrari-Sankar-Sklansky algorithm [Ferrari1984]_ combined with
+        Bayer's building simplification [Bayer2009]_.
         
-        Args:
-            coordinates: List of (x, y) polygon vertices
-            max_rectangles: Maximum number of rectangles to return
-            
-        Returns:
-            List of rectangle corner lists, each with 4 corners
+        :param coordinates: List of (x, y) polygon vertices.
+        :type coordinates: List[Tuple[float, float]]
+        :param max_rectangles: Maximum number of rectangles to return.
+            If more rectangles are produced, only the largest by area
+            are kept. Default is 5.
+        :type max_rectangles: int
+        :returns: List of rectangle corner lists, each with 4 corners.
+        :rtype: List[List[Tuple[float, float]]]
+        
+        .. rubric:: Algorithm
+        
+        1. Find the building's principal orientation using smallest 
+           enclosing rectangle
+        2. Rotate to axis-aligned position
+        3. Simplify to rectilinear shape using :class:`BuildingSimplifier`
+        4. Partition into minimal rectangles using :class:`RectangularPartitioner`
+        5. Rotate resulting rectangles back to original orientation
         """
         if len(coordinates) < 4:
             return [RectangleFitter.simplify_to_rectangle(coordinates)]
@@ -480,11 +683,26 @@ class RectangleFitter:
 
 
 class BuildingMerger:
-    """Merge CitySketch buildings into GeoJSON buildings"""
+    """
+    Merge CitySketch buildings into unified GeoJSON building footprints.
+    
+    Provides static methods for detecting shared walls, checking intersections,
+    and merging adjacent buildings with similar heights into single polygons.
+    """
 
     @staticmethod
     def buildings_share_wall(b1, b2, tolerance: float = 0.5) -> bool:
-        """Check if two buildings share at least one wall"""
+        """
+        Check if two buildings share at least one wall.
+        
+        :param b1: First building object.
+        :param b2: Second building object.
+        :param tolerance: Distance tolerance in coordinate units for 
+            determining if edges are shared. Default is 0.5.
+        :type tolerance: float
+        :returns: True if buildings share a wall.
+        :rtype: bool
+        """
         # Get corners of both buildings (considering rotation)
         corners1 = b1.get_rotated_corners() if hasattr(b1,
                                                        'get_rotated_corners') else b1.get_corners()
@@ -511,7 +729,18 @@ class BuildingMerger:
     @staticmethod
     def _edges_share_wall(e1_start, e1_end, e2_start, e2_end,
                           tolerance: float) -> bool:
-        """Check if two edges form a shared wall"""
+        """
+        Check if two edges form a shared wall.
+        
+        :param e1_start: Start point of first edge.
+        :param e1_end: End point of first edge.
+        :param e2_start: Start point of second edge.
+        :param e2_end: End point of second edge.
+        :param tolerance: Distance tolerance.
+        :type tolerance: float
+        :returns: True if edges form a shared wall.
+        :rtype: bool
+        """
         # Calculate edge vectors
         v1 = (e1_end[0] - e1_start[0], e1_end[1] - e1_start[1])
         v2 = (e2_end[0] - e2_start[0], e2_end[1] - e2_start[1])
@@ -553,7 +782,15 @@ class BuildingMerger:
 
     @staticmethod
     def _point_to_line_distance(point, line_start, line_end):
-        """Calculate distance from point to line segment"""
+        """
+        Calculate distance from a point to a line segment.
+        
+        :param point: The point as (x, y).
+        :param line_start: Start point of line segment.
+        :param line_end: End point of line segment.
+        :returns: Distance from point to line segment.
+        :rtype: float
+        """
         x0, y0 = point
         lat1, lon1 = line_start
         lat2, lon2 = line_end
@@ -574,7 +811,15 @@ class BuildingMerger:
 
     @staticmethod
     def _project_point_on_line(point, line_start, line_end):
-        """Project point onto line and return parameter t"""
+        """
+        Project a point onto a line and return the parameter t.
+        
+        :param point: The point as (x, y).
+        :param line_start: Start point of line.
+        :param line_end: End point of line.
+        :returns: Parameter t where 0 <= t <= 1 means point projects onto segment.
+        :rtype: float
+        """
         x0, y0 = point
         lat1, lon1 = line_start
         lat2, lon2 = line_end
@@ -589,7 +834,14 @@ class BuildingMerger:
 
     @staticmethod
     def buildings_intersect(b1, b2) -> bool:
-        """Check if two buildings' outlines intersect"""
+        """
+        Check if two buildings' outlines intersect.
+        
+        :param b1: First building object.
+        :param b2: Second building object.
+        :returns: True if building outlines intersect.
+        :rtype: bool
+        """
         corners1 = b1.get_rotated_corners() if hasattr(b1,
                                                        'get_rotated_corners') else b1.get_corners()
         corners2 = b2.get_rotated_corners() if hasattr(b2,
@@ -616,7 +868,14 @@ class BuildingMerger:
 
     @staticmethod
     def _point_in_polygon(point, polygon):
-        """Check if point is inside polygon using ray casting"""
+        """
+        Check if a point is inside a polygon using ray casting.
+        
+        :param point: The point as (x, y).
+        :param polygon: List of polygon vertices.
+        :returns: True if point is inside polygon.
+        :rtype: bool
+        """
         x, y = point
         n = len(polygon)
         inside = False
@@ -634,7 +893,16 @@ class BuildingMerger:
 
     @staticmethod
     def _edges_intersect(p1, p2, p3, p4):
-        """Check if line segments p1-p2 and p3-p4 intersect"""
+        """
+        Check if line segments p1-p2 and p3-p4 intersect.
+        
+        :param p1: First point of first segment.
+        :param p2: Second point of first segment.
+        :param p3: First point of second segment.
+        :param p4: Second point of second segment.
+        :returns: True if segments intersect.
+        :rtype: bool
+        """
 
         def ccw(A, B, C):
             return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (
@@ -650,8 +918,23 @@ class BuildingMerger:
                                    height_tolerance: float = HEIGHT_TOLERANCE) -> \
     Optional[GeoJsonBuilding]:
         """
-        Merge a list of CitySketch buildings into a single GeoJSON building
-        if they share walls or intersect and have similar heights.
+        Merge a list of CitySketch buildings into a single GeoJSON building.
+        
+        Buildings are merged if they share walls or intersect and have
+        similar heights (within the specified tolerance).
+        
+        :param buildings: List of Building objects to merge.
+        :type buildings: List[Building]
+        :param height_tolerance: Maximum relative height difference allowed
+            for merging. Default is :data:`HEIGHT_TOLERANCE` (10%).
+        :type height_tolerance: float
+        :returns: Merged GeoJsonBuilding, or None if buildings cannot be merged.
+        :rtype: GeoJsonBuilding or None
+        
+        .. note::
+        
+            The merged building uses the convex hull of all input building
+            corners, which may not perfectly represent complex merged shapes.
         """
         if not buildings:
             return None
@@ -728,7 +1011,14 @@ class BuildingMerger:
 
     @staticmethod
     def _convex_hull(points):
-        """Compute convex hull of points using Graham scan"""
+        """
+        Compute convex hull of points using Graham scan algorithm.
+        
+        :param points: List of (x, y) points.
+        :type points: List[Tuple[float, float]]
+        :returns: List of points forming the convex hull.
+        :rtype: List[Tuple[float, float]]
+        """
         if len(points) < 3:
             return points
 
@@ -758,7 +1048,16 @@ class BuildingMerger:
 
     @staticmethod
     def _ccw(p1, p2, p3):
-        """Counter-clockwise test"""
+        """
+        Counter-clockwise test for three points.
+        
+        :param p1: First point.
+        :param p2: Second point.
+        :param p3: Third point.
+        :returns: Positive if counter-clockwise, negative if clockwise, 
+            zero if collinear.
+        :rtype: float
+        """
         return (p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (
                     p3[0] - p1[0])
 
