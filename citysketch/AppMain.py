@@ -37,7 +37,7 @@ except ImportError:
 
 from ._version import __version__, __version_tuple__
 from .AppDialogs import (AboutDialog, HeightDialog,
-                        BasemapDialog, GeoTiffDialog)
+                        BasemapDialog, CenterLocationDialog, GeoTiffDialog)
 from .App3dview import OPENGL_SUPPORT, Building3DViewer
 from .AppSettings import colorset, settings
 from .Building import Building, BuildingGroup
@@ -764,6 +764,7 @@ class MapCanvas(wx.Panel):
         self.geo_center_lat = lat
         self.geo_center_lon = lon
         self.geo_zoom = self.BASE_GEO_ZOOM  # Tile zoom level
+        self.show_center_marker = False  # Show marker at center location
 
         # Undo/Redo manager
         self.undo_manager = UndoManager(max_undo_levels=50)
@@ -1093,6 +1094,10 @@ class MapCanvas(wx.Panel):
             wx.MessageBox("No buildings selected for import",
                           "No Selection",
                           wx.OK | wx.ICON_WARNING)
+            # Hide GeoJSON buildings and update button even when nothing imported
+            self.geojson_mode = 'hidden'
+            self.main_frame.geojson_btn.SetLabel("GeoJSON: Show")
+            self.Refresh()
             return 0
 
         # Save state before import
@@ -1349,6 +1354,10 @@ class MapCanvas(wx.Panel):
                 and self.selection_rect_start and self.current_mouse_pos):
             self.draw_selection_rectangle(gc)
 
+        # Draw center location marker
+        if self.show_center_marker:
+            self.draw_center_marker(gc)
+
     def draw_map_tiles(self, dc):
         """Draw map tiles as background.
         
@@ -1472,6 +1481,78 @@ class MapCanvas(wx.Panel):
         text = f"{building.storeys}F"
         tw, th = gc.GetTextExtent(text)
         gc.DrawText(text, scx - tw / 2, scy - th / 2)
+
+    def draw_center_marker(self, gc):
+        """
+        Draw a place marker at the center location (0, 0 in world coordinates).
+        
+        The marker is styled similar to a Google Earth pin: a teardrop shape
+        with a circular head and pointed bottom.
+        """
+        # Get screen position of center (0, 0 in world coords)
+        sx, sy = self.world_to_screen(0, 0)
+        
+        # Marker dimensions
+        marker_height = 36
+        head_radius = 10
+        
+        # Colors - red pin with white center dot
+        pin_color = wx.Colour(220, 60, 60)  # Red
+        pin_border = wx.Colour(139, 0, 0)   # Dark red
+        dot_color = wx.Colour(255, 255, 255)  # White
+        shadow_color = wx.Colour(0, 0, 0, 60)  # Semi-transparent black
+        
+        # Draw shadow (offset ellipse)
+        gc.SetBrush(wx.Brush(shadow_color))
+        gc.SetPen(wx.TRANSPARENT_PEN)
+        gc.DrawEllipse(sx - 6, sy - 3, 12, 6)
+        
+        # Create the teardrop pin shape using a path
+        path = gc.CreatePath()
+        
+        # The pin tip is at (sx, sy), head is above
+        tip_y = sy
+        head_center_y = sy - marker_height + head_radius
+        
+        # Start at the tip
+        path.MoveToPoint(sx, tip_y)
+        
+        # Draw left curve from tip to head
+        # Control points for bezier curve
+        path.AddCurveToPoint(
+            sx - head_radius * 0.8, tip_y - marker_height * 0.4,  # control 1
+            sx - head_radius, head_center_y + head_radius * 0.5,  # control 2
+            sx - head_radius, head_center_y  # end point (left of head)
+        )
+        
+        # Draw the circular head (arc from left to right)
+        path.AddArc(sx, head_center_y, head_radius, math.pi, 0, True)
+        
+        # Draw right curve from head back to tip
+        path.AddCurveToPoint(
+            sx + head_radius, head_center_y + head_radius * 0.5,  # control 1
+            sx + head_radius * 0.8, tip_y - marker_height * 0.4,  # control 2
+            sx, tip_y  # end point (back to tip)
+        )
+        
+        path.CloseSubpath()
+        
+        # Draw pin with gradient-like effect (solid fill for simplicity)
+        gc.SetBrush(wx.Brush(pin_color))
+        gc.SetPen(wx.Pen(pin_border, 2))
+        gc.DrawPath(path)
+        
+        # Draw highlight on the head (small white arc on upper left)
+        highlight_path = gc.CreatePath()
+        highlight_path.AddArc(sx - 2, head_center_y - 2, head_radius * 0.4, 
+                              math.pi * 0.8, math.pi * 1.3, False)
+        gc.SetPen(wx.Pen(wx.Colour(255, 255, 255, 150), 2))
+        gc.StrokePath(highlight_path)
+        
+        # Draw center dot on the head
+        gc.SetBrush(wx.Brush(dot_color))
+        gc.SetPen(wx.Pen(pin_border, 1))
+        gc.DrawEllipse(sx - 4, head_center_y - 4, 8, 8)
 
     def draw_selected_rectangle(self, gc):
         """Draw preview of building being created with rotation support"""
@@ -1918,11 +1999,34 @@ class MapCanvas(wx.Panel):
             rx1, rx2 = min(x1, x2), max(x1, x2)
             ry1, ry2 = min(y1, y2), max(y1, y2)
 
+            # Select regular buildings
             for building in self.buildings:
                 le, lo, ri, up = building.get_llur()
                 if (le >= rx1 and ri <= rx2 and
                         lo >= ry1 and up <= ry2):
                     self.selected_buildings.add(building)
+
+            # Select GeoJSON buildings if they are shown
+            if self.geojson_mode == 'show':
+                # Convert rectangle to geo coordinates
+                lat1, lon1 = self.world_to_geo(rx1, ry1)
+                lat2, lon2 = self.world_to_geo(rx2, ry2)
+                
+                # Ensure proper ordering (lat/lon may be swapped)
+                geo_lat1, geo_lat2 = min(lat1, lat2), max(lat1, lat2)
+                geo_lon1, geo_lon2 = min(lon1, lon2), max(lon1, lon2)
+                
+                for geojson_building in self.geojson_buildings:
+                    # Check if all vertices are within the selection rectangle
+                    all_inside = True
+                    for lat, lon in geojson_building.coordinates:
+                        if not (geo_lat1 <= lat <= geo_lat2 and 
+                                geo_lon1 <= lon <= geo_lon2):
+                            all_inside = False
+                            break
+                    
+                    if all_inside:
+                        geojson_building.selected = True
 
             self.mode = SelectMode.NORMAL
             self.selection_rect_start = None
@@ -2268,6 +2372,8 @@ class MainFrame(wx.Frame):
                                           "Redo the last undone action")
         edit_menu.AppendSeparator()
         
+        center_location_item = edit_menu.Append(wx.ID_ANY, "Center &Location...",
+                                                "Set map center location and marker")
         basemap_item = edit_menu.Append(wx.ID_ANY, "Select &Basemap",
                                         "Choose a basemap")
         zoom_item = edit_menu.Append(wx.ID_ANY,
@@ -2337,6 +2443,8 @@ class MainFrame(wx.Frame):
                       id=geotiff_item.GetId())
 
         # Bind edit menu events
+        self.Bind(wx.EVT_MENU, self.on_center_location,
+                  id=center_location_item.GetId())
         self.Bind(wx.EVT_MENU, self.on_select_basemap,
                   id=basemap_item.GetId())
         self.Bind(wx.EVT_MENU, self.on_zoom_to_buildings,
@@ -2593,17 +2701,45 @@ class MainFrame(wx.Frame):
         self.canvas.zoom_to_buildings()
         self.SetStatusText("Zoomed to fit all buildings")
 
+    def on_center_location(self, event):
+        """Open center location dialog"""
+        dialog = CenterLocationDialog(
+            self,
+            self.canvas.geo_center_lat,
+            self.canvas.geo_center_lon,
+            self.canvas.show_center_marker
+        )
+
+        if dialog.ShowModal() == wx.ID_OK:
+            lat, lon, show_marker = dialog.get_values()
+
+            # Update canvas settings
+            self.canvas.geo_center_lat = lat
+            self.canvas.geo_center_lon = lon
+            self.canvas.show_center_marker = show_marker
+
+            # Clear tile cache since center changed
+            self.canvas.map_tiles.clear()
+            self.canvas.tiles_loading.clear()
+
+            self.canvas.Refresh()
+
+            self.SetStatusText(
+                f"Center: {lat:.4f}, {lon:.4f}"
+                f"{' (marker visible)' if show_marker else ''}"
+            )
+
+        dialog.Destroy()
+
     def on_select_basemap(self, event):
         """Open basemap selection dialog"""
         dialog = BasemapDialog(
             self,
-            self.canvas.map_provider,
-            self.canvas.geo_center_lat,
-            self.canvas.geo_center_lon
+            self.canvas.map_provider
         )
 
         if dialog.ShowModal() == wx.ID_OK:
-            provider, lat, lon = dialog.get_values()
+            provider = dialog.get_values()
 
             # Clear tile cache if provider changed
             if provider != self.canvas.map_provider:
@@ -2612,8 +2748,6 @@ class MainFrame(wx.Frame):
 
             # Update canvas settings
             self.canvas.map_provider = provider
-            self.canvas.geo_center_lat = lat
-            self.canvas.geo_center_lon = lon
 
             self.canvas.Refresh()
 

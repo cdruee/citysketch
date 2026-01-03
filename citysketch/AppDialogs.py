@@ -84,14 +84,12 @@ class AboutDialog(wx.Dialog):
 # =========================================================================
 
 class BasemapDialog(wx.Dialog):
-    """Dialog for selecting and configuring basemap"""
+    """Dialog for selecting basemap provider"""
 
-    def __init__(self, parent, current_provider, lat, lon):
-        super().__init__(parent, title="Select Basemap", size=(450, 500))
+    def __init__(self, parent, current_provider):
+        super().__init__(parent, title="Select Basemap", size=(300, 250))
 
         self.provider = current_provider
-        self.lat = lat
-        self.lon = lon
 
         panel = wx.Panel(self)
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -105,6 +103,55 @@ class BasemapDialog(wx.Dialog):
         self.provider_box.SetStringSelection(current_provider.value)
         sizer.Add(self.provider_box, 0, wx.EXPAND | wx.ALL, 10)
         self.provider_box.Bind(wx.EVT_RADIOBOX, self.on_provider_changed)
+
+        # Add some spacing
+        sizer.Add((-1, 10))
+
+        # Buttons
+        btn_sizer = wx.StdDialogButtonSizer()
+        ok_btn = wx.Button(panel, wx.ID_OK)
+        cancel_btn = wx.Button(panel, wx.ID_CANCEL)
+        btn_sizer.AddButton(ok_btn)
+        btn_sizer.AddButton(cancel_btn)
+        btn_sizer.Realize()
+        sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
+
+        panel.SetSizerAndFit(sizer)
+
+        # Center the dialog
+        self.Centre()
+
+    def on_provider_changed(self, event):
+        """Handle provider selection change"""
+        rb = event.GetEventObject()
+        label = rb.GetStringSelection()
+        for p in MapProvider:
+            if p.value == label:
+                provider = p
+                break
+        else:
+            return
+        self.provider = provider
+
+    def get_values(self):
+        """Get the current values"""
+        return self.provider
+
+
+# =========================================================================
+
+class CenterLocationDialog(wx.Dialog):
+    """Dialog for setting and configuring map center location"""
+
+    def __init__(self, parent, lat, lon, show_marker=False):
+        super().__init__(parent, title="Center Location", size=(400, 400))
+
+        self.lat = lat
+        self.lon = lon
+        self.show_marker = show_marker
+
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
 
         # Location settings
         location_box = wx.StaticBox(panel, label="Map Center Location")
@@ -149,6 +196,26 @@ class BasemapDialog(wx.Dialog):
         sizer.Add(location_sizer, 0,
                   wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
+        # Marker settings
+        marker_box = wx.StaticBox(panel, label="Center Marker")
+        marker_sizer = wx.StaticBoxSizer(marker_box, wx.VERTICAL)
+
+        self.marker_cb = wx.CheckBox(panel, label="Show center location marker")
+        self.marker_cb.SetValue(show_marker)
+        marker_sizer.Add(self.marker_cb, 0, wx.ALL, 5)
+
+        # Marker description
+        marker_desc = wx.StaticText(
+            panel, 
+            label="Displays a pin marker at the center location\n"
+                  "to help identify the reference point."
+        )
+        marker_desc.SetFont(marker_desc.GetFont().MakeSmaller())
+        marker_sizer.Add(marker_desc, 0, wx.LEFT | wx.BOTTOM, 5)
+
+        sizer.Add(marker_sizer, 0,
+                  wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+
         # Add some spacing
         sizer.Add((-1, 10))
 
@@ -161,23 +228,10 @@ class BasemapDialog(wx.Dialog):
         btn_sizer.Realize()
         sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
 
-        #panel.SetSizer(sizer)
         panel.SetSizerAndFit(sizer)
 
         # Center the dialog
         self.Centre()
-
-    def on_provider_changed(self, event):
-        """Handle provider selection change"""
-        rb = event.GetEventObject()
-        label = rb.GetStringSelection()
-        for p in MapProvider:
-            if p.value == label:
-                provider = p
-                break
-        else:
-            return
-        self.provider = provider
 
     def set_location(self, lat, lon):
         """Set location in text controls"""
@@ -193,7 +247,8 @@ class BasemapDialog(wx.Dialog):
             lat = self.lat
             lon = self.lon
 
-        return self.provider, lat, lon
+        show_marker = self.marker_cb.GetValue()
+        return lat, lon, show_marker
 
 
 # =========================================================================
