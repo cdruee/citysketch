@@ -9,7 +9,24 @@ from .AppSettings import settings
 
 @dataclass
 class Building:
-    """Represents a building with its properties"""
+    """
+    Represents a building with its geometric properties.
+    
+    Coordinates are in Web Mercator (EPSG:3857) meters, relative to
+    the application's center position.
+    
+    :param id: Unique identifier for the building
+    :param x1: X-coordinate of anchor corner (corner #0) in Web Mercator meters
+    :param y1: Y-coordinate of anchor corner (corner #0) in Web Mercator meters  
+    :param a: Width along the building's local X-axis (when rotation=0), 
+        or 0 for cylindrical buildings
+    :param b: Height along the building's local Y-axis (when rotation=0),
+        or radius for cylindrical buildings
+    :param height: Building height in meters (default 10.0)
+    :param storeys: Number of storeys (default 3)
+    :param rotation: Rotation angle in radians, counter-clockwise from 
+        positive X-axis (default 0.0)
+    """
     id: str
     x1: float  # corner #0
     y1: float  # corner #0

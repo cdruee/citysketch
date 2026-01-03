@@ -151,6 +151,84 @@ def wm2ll(x, y):
 
 # -------------------------------------------------------------------------
 
+def wm2ut(x: float, y: float) -> tuple[float, float]:
+    """
+    Converts Web Mercator (WGS 84 / Pseudo-Mercator, https://epsg.io/3857)
+    into UTM east/north coordinates (ETRS89 / UTM zone 32N, https://epsg.io/25832).
+
+    :param x: eastward Web Mercator coordinate in m
+    :type x: float
+    :param y: northward Web Mercator coordinate in m
+    :type y: float
+    :return: easting (eastward coordinate) in m,
+        northing (northward coordinate) in m
+    :rtype: tuple[float, float]
+    """
+    transform = osr.CoordinateTransformation(WM, UT)
+    easting, northing, zz = transform.TransformPoint(x, y)
+    return easting, northing
+
+# -------------------------------------------------------------------------
+
+def ut2wm(east: float, north: float) -> tuple[float, float]:
+    """
+    Converts UTM east/north coordinates (ETRS89 / UTM zone 32N, https://epsg.io/25832)
+    into Web Mercator (WGS 84 / Pseudo-Mercator, https://epsg.io/3857).
+
+    :param east: eastward UTM coordinate in m
+    :type east: float
+    :param north: northward UTM coordinate in m
+    :type north: float
+    :return: x (eastward coordinate) in m,
+        y (northward coordinate) in m
+    :rtype: tuple[float, float]
+    """
+    transform = osr.CoordinateTransformation(UT, WM)
+    x, y, zz = transform.TransformPoint(east, north)
+    return x, y
+
+# -------------------------------------------------------------------------
+
+def wm2gk(x: float, y: float) -> tuple[float, float]:
+    """
+    Converts Web Mercator (WGS 84 / Pseudo-Mercator, https://epsg.io/3857)
+    into Gauss-Krüger rechts/hoch (east/north) coordinates
+    (DHDN / 3-degree Gauss-Kruger zone 3 (E-N), https://epsg.io/5677).
+
+    :param x: eastward Web Mercator coordinate in m
+    :type x: float
+    :param y: northward Web Mercator coordinate in m
+    :type y: float
+    :return: Rechtswert (eastward coordinate) in m,
+        Hochwert (northward coordinate) in m
+    :rtype: tuple[float, float]
+    """
+    transform = osr.CoordinateTransformation(WM, GK)
+    rechts, hoch, zz = transform.TransformPoint(x, y)
+    return rechts, hoch
+
+# -------------------------------------------------------------------------
+
+def gk2wm(rechts: float, hoch: float) -> tuple[float, float]:
+    """
+    Converts Gauss-Krüger rechts/hoch (east/north) coordinates
+    (DHDN / 3-degree Gauss-Kruger zone 3 (E-N), https://epsg.io/5677)
+    into Web Mercator (WGS 84 / Pseudo-Mercator, https://epsg.io/3857).
+
+    :param rechts: Rechtswert (eastward coordinate) in m
+    :type rechts: float
+    :param hoch: Hochwert (northward coordinate) in m
+    :type hoch: float
+    :return: x (eastward coordinate) in m,
+        y (northward coordinate) in m
+    :rtype: tuple[float, float]
+    """
+    transform = osr.CoordinateTransformation(GK, WM)
+    x, y, zz = transform.TransformPoint(rechts, hoch)
+    return x, y
+
+# -------------------------------------------------------------------------
+
 def math2geo(rot):
     return rot * 180 / math.pi
 

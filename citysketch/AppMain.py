@@ -593,7 +593,7 @@ class MapCanvas(wx.Panel):
         self.buildings: List[Building] = []
         self.mode = SelectMode.NORMAL
         self.snap_enabled = True
-        self.zoom_level = 1.0
+        self.zoom_level = 2.0  # pixels per meter (Web Mercator)
         self.pan_x = 0
         self.pan_y = 0
         self.storey_height = 3.3  # meters per storey
@@ -660,19 +660,34 @@ class MapCanvas(wx.Panel):
         return sx, sy
 
     def geo_to_world(self, lat: float, lon: float) -> Tuple[float, float]:
-        """Convert geographic coordinates to world coordinates"""
-        wm_x ,wm_y = ll2wm(lat, lon)
+        """
+        Convert geographic coordinates (WGS84) to world coordinates (Web Mercator).
+        
+        World coordinates are EPSG:3857 (Web Mercator) meters, centered on
+        the current geo_center position.
+        
+        :param lat: Latitude in degrees (WGS84)
+        :param lon: Longitude in degrees (WGS84)
+        :return: (x, y) in Web Mercator meters, relative to center
+        """
+        wm_x, wm_y = ll2wm(lat, lon)
         center_x, center_y = ll2wm(self.geo_center_lat, self.geo_center_lon)
-        scale = math.cos(math.radians(self.geo_center_lat))**2
-
-        return (wm_x - center_x) * scale, (wm_y - center_y) * scale
+        return wm_x - center_x, wm_y - center_y
 
     def world_to_geo(self, x: float, y: float) -> Tuple[float, float]:
-        """Convert world coordinates to geographic coordinates"""
-        scale = math.cos(math.radians(self.geo_center_lat))**2
+        """
+        Convert world coordinates (Web Mercator) to geographic coordinates (WGS84).
+        
+        World coordinates are EPSG:3857 (Web Mercator) meters, centered on
+        the current geo_center position.
+        
+        :param x: X coordinate in Web Mercator meters, relative to center
+        :param y: Y coordinate in Web Mercator meters, relative to center
+        :return: (lat, lon) in degrees (WGS84)
+        """
         center_x, center_y = ll2wm(self.geo_center_lat, self.geo_center_lon)
-        wm_x = x / scale + center_x
-        wm_y = y / scale + center_y
+        wm_x = x + center_x
+        wm_y = y + center_y
         return wm2ll(wm_x, wm_y)
 
     def get_view_corners(self, coords : str | None = None):
@@ -1128,9 +1143,18 @@ class MapCanvas(wx.Panel):
         # Draw grid
         self.draw_grid(gc)
 
+        # Calculate appropriate tile zoom level based on current zoom
+        # At geo_zoom z, meters_per_tile = 40075016.686 / 2^z
+        # We want tile_size in pixels to be reasonable (256-512 pixels)
+        # tile_size = meters_per_tile * zoom_level
+        # For tile_size ≈ 256: zoom_level ≈ 256 / meters_per_tile = 256 * 2^z / 40075016.686
+        EARTH_CIRCUMFERENCE = 40075016.686
         self.geo_zoom = 11
-        while (self.zoom_level > 2.**self.geo_zoom / 2.**self.BASE_GEO_ZOOM
-                and self.geo_zoom < 18):
+        while self.geo_zoom < 19:
+            meters_per_tile = EARTH_CIRCUMFERENCE / (2 ** self.geo_zoom)
+            tile_size_pixels = meters_per_tile * self.zoom_level
+            if tile_size_pixels <= 512:
+                break
             self.geo_zoom += 1
 
         if self.statusbar is not None:
@@ -1167,9 +1191,20 @@ class MapCanvas(wx.Panel):
             self.draw_selection_rectangle(gc)
 
     def draw_map_tiles(self, dc):
-        """Draw map tiles as background"""
+        """Draw map tiles as background.
+        
+        Tiles use Web Mercator projection (EPSG:3857). At zoom level z,
+        one tile (256 pixels) covers 40075016.686 / 2^z meters.
+        """
         width, height = self.GetSize()
-        tile_size = self.BASE_TILE_SIZE * self.zoom_level * 2**16/( 2**self.geo_zoom)
+        
+        # Meters per tile at current geo_zoom level
+        # Full Web Mercator range is 40075016.686 meters (circumference of Earth)
+        EARTH_CIRCUMFERENCE = 40075016.686  # meters
+        meters_per_tile = EARTH_CIRCUMFERENCE / (2 ** self.geo_zoom)
+        
+        # Screen pixels per tile: meters_per_tile * zoom_level (pixels per meter)
+        tile_size = meters_per_tile * self.zoom_level
 
         center_tile_x, center_tile_y = self.lat_lon_to_tile(
             self.geo_center_lat, self.geo_center_lon, self.geo_zoom
@@ -1180,18 +1215,16 @@ class MapCanvas(wx.Panel):
         frac_x = center_tile_x - floor_x
         frac_y = center_tile_y - floor_y
 
-        center_x, center_y = self.world_to_screen(0,0 )
+        center_x, center_y = self.world_to_screen(0, 0)
 
         offset_x = -frac_x * tile_size + center_x
         offset_y = -frac_y * tile_size + center_y
 
-        tiles_x = math.ceil(width / tile_size) + 1
-        tiles_y = math.ceil(height / tile_size) + 1
+        tiles_x = math.ceil(width / tile_size) + 2
+        tiles_y = math.ceil(height / tile_size) + 2
 
-        #start_tile_x = floor_x - 1 # tiles_x // 2
-        #start_tile_y = floor_y - 1 # tiles_y // 2
-        start_tile_x = floor_x - math.ceil( offset_x / tile_size)
-        start_tile_y = floor_y - math.ceil( offset_y / tile_size)
+        start_tile_x = floor_x - math.ceil(offset_x / tile_size)
+        start_tile_y = floor_y - math.ceil(offset_y / tile_size)
 
 
         for tile_y in range(start_tile_y, start_tile_y + tiles_y):
@@ -1459,8 +1492,9 @@ class MapCanvas(wx.Panel):
             )
 
             # Calculate view bounds in tile coordinates
-            tile_size = self.BASE_TILE_SIZE * self.zoom_level * 2 ** 16 / (
-                        2 ** self.geo_zoom)
+            EARTH_CIRCUMFERENCE = 40075016.686
+            meters_per_tile = EARTH_CIRCUMFERENCE / (2 ** self.geo_zoom)
+            tile_size = meters_per_tile * self.zoom_level
             center_x, center_y = self.world_to_screen(0, 0)
 
             # Convert screen corners to tile coordinates
