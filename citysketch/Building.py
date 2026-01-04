@@ -281,6 +281,14 @@ class BuildingGroup:
             self.buildings.append(building)
         self.update_buildings()
 
+    def get(self, index: int):
+        """Get building number index"""
+        if not 0 <= index < len(self.buildings):
+            raise ValueError(f"{self.__class__.__name__} "
+                             f"list index out of range")
+        else:
+            return self.buildings[index]
+
     def remove(self, building: Building):
         """Remove a building from the group,
         do nothing if building not in list"""

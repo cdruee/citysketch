@@ -2600,26 +2600,31 @@ class MainFrame(wx.Frame):
 
     def on_set_height(self, event):
         """Open height setting dialog"""
-        if len(self.canvas.selected_buildings) > 0:
+        if len(self.canvas.selected_buildings) == 0:
             wx.MessageBox("Please select at least one building",
                           "No Selection",
                           wx.OK | wx.ICON_WARNING)
             return
 
         # Get current values from first selected building
-        stories = self.canvas.selected_buildings[0].storeys
-        height = self.canvas.selected_buildings[0].height
+        stories = self.canvas.selected_buildings.get(0).storeys
+        height = self.canvas.selected_buildings.get(0).height
 
         dialog = HeightDialog(self, stories, height,
                               self.canvas.storey_height)
         if dialog.ShowModal() == wx.ID_OK:
             new_stories, new_height = dialog.get_values()
             for building in self.canvas.selected_buildings:
-                building.storeys = new_stories
+                if new_stories is not None:
+                    building.storeys = new_stories
                 building.height = new_height
             self.canvas.Refresh()
-            self.SetStatusText(
-                f"Set height to {new_stories} stories ({new_height:.1f}m)")
+            if new_stories is not None:
+                self.SetStatusText(
+                    f"Set height to {new_stories} stories ({new_height:.1f}m)")
+            else:
+                self.SetStatusText(
+                    f"Set height to {new_height:.1f}m")
         dialog.Destroy()
 
     def on_undo(self, event):
