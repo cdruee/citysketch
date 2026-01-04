@@ -207,7 +207,7 @@ def load_from_austaltxt(path):
                 a=a,
                 b=b,
                 height=cb[i],
-                storeys=1,
+                storeys=None,
                 rotation=geo2math(wb[i])
             )
             buildings.append(bldg)

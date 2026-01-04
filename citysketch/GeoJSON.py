@@ -384,17 +384,14 @@ class GeoJsonBuilding:
         cx, cy = (lat1 + lat2) / 2, (lon1 + lon2) / 2
         return self.contains_point(cx, cy)
 
-    def to_buildings(self, storey_height: float = 3.3, geo_to_world=None):
+    def to_buildings(self, geo_to_world=None):
         """
         Convert to one or more CitySketch Building objects by fitting rectangles.
         
         For complex polygon shapes (L-shaped, T-shaped, etc.), multiple
         rectangles may be fitted using the Ferrari-Sankar-Sklansky algorithm.
         
-        :param storey_height: Height per storey in meters for calculating
-            storey count. Default is 3.3m.
-        :type storey_height: float
-        :param geo_to_world: Optional function to convert (lat, lon) to 
+        :param geo_to_world: Optional function to convert (lat, lon) to
             world coordinates (x, y). If None, coordinates are used as-is.
         :type geo_to_world: callable or None
         :returns: List of Building objects fitted to the polygon.
@@ -442,7 +439,7 @@ class GeoJsonBuilding:
                 a=a,
                 b=b,
                 height=self.height,
-                storeys=max(1, round(self.height / storey_height)),
+                storeys=None,
                 rotation=rotation
             )
 
@@ -453,7 +450,7 @@ class GeoJsonBuilding:
 
         return buildings
 
-    def to_building(self, storey_height: float = 3.3, geo_to_world=None):
+    def to_building(self, geo_to_world=None):
         """
         Convert to a single CitySketch Building object.
         
@@ -461,8 +458,6 @@ class GeoJsonBuilding:
         largest) fitted rectangle. For complex polygons that decompose into
         multiple buildings, use :meth:`to_buildings` instead.
         
-        :param storey_height: Height per storey in meters. Default is 3.3m.
-        :type storey_height: float
         :param geo_to_world: Optional coordinate transformation function.
         :type geo_to_world: callable or None
         :returns: The first fitted Building, or None if fitting fails.
@@ -470,7 +465,7 @@ class GeoJsonBuilding:
         
         .. seealso:: :meth:`to_buildings`
         """
-        buildings = self.to_buildings(storey_height, geo_to_world=geo_to_world)
+        buildings = self.to_buildings(geo_to_world=geo_to_world)
         return buildings[0] if buildings else None
 
 

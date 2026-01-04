@@ -1478,7 +1478,10 @@ class MapCanvas(wx.Panel):
         gc.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL,
                            wx.FONTWEIGHT_NORMAL),
                    colorset.get('COL_BLDG_LBL'))
-        text = f"{building.storeys}F"
+        if building.storeys:
+            text = f"{building.storeys}F"
+        else:
+            text = f"{round(building.height)}m"
         tw, th = gc.GetTextExtent(text)
         gc.DrawText(text, scx - tw / 2, scy - th / 2)
 
@@ -2780,7 +2783,9 @@ class MainFrame(wx.Frame):
                     self.canvas.storey_height = height
                     # Update all buildings
                     for building in self.canvas.buildings:
-                        building.height = building.storeys * height
+                        # Update only buildings using stroreys
+                        if building.storeys:
+                            building.height = building.storeys * height
                     self.canvas.Refresh()
                     self.SetStatusText(
                         f"Storey height set to {height:.1f}m")
