@@ -2344,19 +2344,23 @@ class MainFrame(wx.Frame):
                          "Create a new project")
         file_menu.Append(wx.ID_OPEN, "&Open\tCtrl+O",
                          "Open a CityJSON file")
-
-        # Add Import from GeoJSON
-        import_geojson = file_menu.Append(
-            wx.ID_ANY, "&Import from GeoJSON\tCtrl+I",
-            "Import buildings from GeoJSON files")
-
         file_menu.Append(wx.ID_SAVE, "&Save\tCtrl+S",
                          "Save the current project")
         file_menu.Append(wx.ID_SAVEAS, "Save &As...\tCtrl+Shift+S",
                          "Save with a new name")
         file_menu.AppendSeparator()
+        
+        # Import section
+        self.import_gba_item = file_menu.Append(
+            wx.ID_ANY, "Import &Global Building Atlas",
+            "Import buildings from Global Building Atlas tiles")
+        import_geojson = file_menu.Append(
+            wx.ID_ANY, "&Import from GeoJSON\tCtrl+I",
+            "Import buildings from GeoJSON files")
+        file_menu.AppendSeparator()
+        
         import_austal = file_menu.Append(
-            wx.ID_ANY, "&Import from AUSTAL",
+            wx.ID_ANY, "Import from &AUSTAL",
             "Import Buildings from austal.txt")
         export_austal = file_menu.Append(
             wx.ID_ANY, "&Export to AUSTAL",
@@ -2401,11 +2405,11 @@ class MainFrame(wx.Frame):
                                        "Set Storey &Height",
                                        "Set the height per storey")
 
-        # Add color settings menu item
+        # Add settings menu item
         edit_menu.AppendSeparator()
-        color_settings_item = edit_menu.Append(wx.ID_ANY,
-                                               "&Color Settings...",
-                                               "Configure application colors")
+        settings_item = edit_menu.Append(wx.ID_ANY,
+                                         "&Settings...",
+                                         "Configure application settings")
 
 
         # Help menu
@@ -2425,6 +2429,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_open, id=wx.ID_OPEN)
         self.Bind(wx.EVT_MENU, self.on_save, id=wx.ID_SAVE)
         self.Bind(wx.EVT_MENU, self.on_save_as, id=wx.ID_SAVEAS)
+        self.Bind(wx.EVT_MENU, self.on_import_gba,
+                  id=self.import_gba_item.GetId())
         self.Bind(wx.EVT_MENU, self.on_import_geojson,
                   id=import_geojson.GetId())
         self.Bind(wx.EVT_MENU, self.on_open_austal,
@@ -2433,8 +2439,8 @@ class MainFrame(wx.Frame):
                   id=export_austal.GetId())
         self.Bind(wx.EVT_MENU, self.on_exit, id=wx.ID_EXIT)
         self.Bind(wx.EVT_MENU, self.on_about, id=wx.ID_ABOUT)
-        self.Bind(wx.EVT_MENU, self.on_color_settings,
-                  id=color_settings_item.GetId())
+        self.Bind(wx.EVT_MENU, self.on_settings,
+                  id=settings_item.GetId())
         
         # Bind undo/redo events
         self.Bind(wx.EVT_MENU, self.on_undo, id=wx.ID_UNDO)
@@ -2465,6 +2471,9 @@ class MainFrame(wx.Frame):
         # Initialize undo/redo menu state (disabled until there are actions)
         self.undo_item.Enable(False)
         self.redo_item.Enable(False)
+        
+        # Initialize GBA import state (disabled until directory is set)
+        self._update_gba_menu_state()
 
     def create_toolbar(self):
         """Create the toolbar"""
@@ -2798,12 +2807,15 @@ class MainFrame(wx.Frame):
                               wx.OK | wx.ICON_ERROR)
         dialog.Destroy()
 
-    def on_color_settings(self, event):
-        """Open color settings dialog"""
+    def on_settings(self, event):
+        """Open settings dialog"""
         dialog = ColorSettingsDialog(self, colorset)
         dialog.ShowModal()
         dialog.Destroy()
 
+        # Update GBA menu state in case directory was changed
+        self._update_gba_menu_state()
+        
         # Refresh the canvas to show color changes
         self.canvas.Refresh()
 
@@ -2905,6 +2917,147 @@ class MainFrame(wx.Frame):
             self.current_directory = os.path.dirname(filepath)
             self.save_austal(filepath)
         dialog.Destroy()
+
+    def _update_gba_menu_state(self):
+        """Update the enabled state of GBA import menu item"""
+        gba_dir = settings.get('GBA_DIRECTORY')
+        enabled = bool(gba_dir) and os.path.isdir(gba_dir)
+        self.import_gba_item.Enable(enabled)
+
+    def _get_gba_coordinate_string(self, value: float, is_longitude: bool) -> str:
+        """
+        Format coordinate as string following the GBA naming convention.
+
+        Args:
+            value: Coordinate value
+            is_longitude: True for longitude, False for latitude
+
+        Returns:
+            Formatted string (e.g., 'e01450' for 14.50 or 'n5000' for 50.00)
+        """
+        if is_longitude:
+            direction = 'e' if value >= 0 else 'w'
+            digits = 5
+            abs_val = abs(int(round(value * 100)))
+            return f"{direction}{abs_val:0{digits}d}"
+        else:
+            direction = 'n' if value >= 0 else 's'
+            digits = 4
+            abs_val = abs(int(round(value * 100)))
+            return f"{direction}{abs_val:0{digits}d}"
+
+    def _parse_gba_coordinate_string(self, coord_str: str) -> float:
+        """
+        Parse a GBA coordinate string back to float.
+
+        Args:
+            coord_str: Coordinate string (e.g., 'e01450' or 'n5000')
+
+        Returns:
+            Float value (e.g., 14.50 or 50.00)
+        """
+        direction = coord_str[0]
+        value = int(coord_str[1:]) / 100.0
+        if direction in ('w', 's'):
+            value = -value
+        return value
+
+    def _find_gba_tiles_for_view(self) -> list:
+        """
+        Find GBA tiles that overlap the current view.
+
+        Returns:
+            List of file paths to matching GeoJSON tiles
+        """
+        gba_dir = settings.get('GBA_DIRECTORY')
+        if not gba_dir or not os.path.isdir(gba_dir):
+            return []
+
+        # Get current view bounds in geographic coordinates
+        width, height = self.canvas.GetSize()
+        
+        # Get corners of view in world coordinates
+        wx1, wy1 = self.canvas.screen_to_world(0, height)  # bottom-left
+        wx2, wy2 = self.canvas.screen_to_world(width, 0)   # top-right
+        
+        # Convert to geographic coordinates
+        view_lat1, view_lon1 = self.canvas.world_to_geo(wx1, wy1)
+        view_lat2, view_lon2 = self.canvas.world_to_geo(wx2, wy2)
+        
+        # Ensure proper ordering
+        view_min_lat = min(view_lat1, view_lat2)
+        view_max_lat = max(view_lat1, view_lat2)
+        view_min_lon = min(view_lon1, view_lon2)
+        view_max_lon = max(view_lon1, view_lon2)
+
+        matching_tiles = []
+        
+        try:
+            for filename in os.listdir(gba_dir):
+                if not filename.endswith('.geojson'):
+                    continue
+                
+                # Parse tile bounds from filename
+                # Format: {lon_left}_{lat_upper}_{lon_right}_{lat_lower}_lod1.geojson
+                parts = filename.replace('.geojson', '').replace('_lod1', '').split('_')
+                if len(parts) < 4:
+                    continue
+                
+                try:
+                    tile_lon_left = self._parse_gba_coordinate_string(parts[0])
+                    tile_lat_upper = self._parse_gba_coordinate_string(parts[1])
+                    tile_lon_right = self._parse_gba_coordinate_string(parts[2])
+                    tile_lat_lower = self._parse_gba_coordinate_string(parts[3])
+                    
+                    # Check for overlap with view
+                    # Tiles overlap if: not (tile_right < view_left or tile_left > view_right
+                    #                       or tile_top < view_bottom or tile_bottom > view_top)
+                    if not (tile_lon_right < view_min_lon or tile_lon_left > view_max_lon or
+                            tile_lat_upper < view_min_lat or tile_lat_lower > view_max_lat):
+                        matching_tiles.append(os.path.join(gba_dir, filename))
+                        
+                except (ValueError, IndexError):
+                    # Skip files with unparseable names
+                    continue
+                    
+        except OSError as e:
+            wx.MessageBox(f"Error reading GBA directory: {e}",
+                         "Error", wx.OK | wx.ICON_ERROR)
+            return []
+
+        return matching_tiles
+
+    def on_import_gba(self, event):
+        """Import buildings from Global Building Atlas tiles in view"""
+        matching_tiles = self._find_gba_tiles_for_view()
+        
+        if not matching_tiles:
+            wx.MessageBox(
+                "No Global Building Atlas tiles found for the current view.\n\n"
+                "Make sure you have navigated to an area covered by the atlas\n"
+                "and that the GBA directory is correctly configured in Settings.",
+                "No Tiles Found",
+                wx.OK | wx.ICON_INFORMATION
+            )
+            return
+        
+        # Confirm import
+        result = wx.MessageBox(
+            f"Found {len(matching_tiles)} GBA tile(s) for the current view.\n\n"
+            f"Do you want to import buildings from these tiles?",
+            "Import Global Building Atlas",
+            wx.YES_NO | wx.ICON_QUESTION
+        )
+        
+        if result != wx.YES:
+            return
+        
+        # Load the GeoJSON files
+        self.canvas.load_geojson_files(matching_tiles)
+        self.SetStatusText(
+            f"Loaded {len(self.canvas.geojson_buildings)} buildings "
+            f"from {len(matching_tiles)} GBA tile(s)"
+        )
 
     def on_import_geojson(self, event):
         """Import buildings from GeoJSON files"""

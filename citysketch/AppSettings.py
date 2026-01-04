@@ -101,6 +101,9 @@ PARAMETER_DEFINITIONS = Definitions({
     'CIRCLE_CORNERS': Definition(
         12, 'Corners of a polygon representing circle'
     ),
+    'GBA_DIRECTORY': Definition(
+        '', 'Global Building Atlas directory path'
+    ),
 })
 
 
