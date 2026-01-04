@@ -68,6 +68,12 @@ class AboutDialog(wx.Dialog):
         szrRight.Add(label, 0,
                      wx.LEFT | wx.RIGHT | wx.TOP | wx.ALIGN_CENTER, 5)
 
+        label = wx.StaticText(self, wx.ID_STATIC,
+                              'UI code developed with assistance from '
+                              'Claude (Anthropic)')
+        szrRight.Add(label, 0,
+                     wx.LEFT | wx.RIGHT | wx.TOP | wx.ALIGN_CENTER, 5)
+
         szrTop.Add(szrRight, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 5)
 
         szrMain.Add(szrTop, 0, wx.ALL, 5)

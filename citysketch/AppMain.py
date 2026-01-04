@@ -2879,7 +2879,7 @@ class MainFrame(wx.Frame):
             "Open AUSTAL settings file",
             defaultDir=self.current_directory,
             defaultFile="austal.txt",
-            wildcard=f"AUSTAL files (austal.txt)|austal.txt",
+            wildcard="AUSTAL files (austal.txt)|austal.txt|All files (*.*)|*.*",
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
         )
 
@@ -2896,7 +2896,7 @@ class MainFrame(wx.Frame):
             "Export to AUSTAL settings file",
             defaultDir=self.current_directory,
             defaultFile="austal.txt",
-            wildcard=f"AUSTAL files (austal.txt)|austal.txt",
+            wildcard="AUSTAL files (austal.txt)|austal.txt|All files (*.*)|*.*",
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
         )
 
