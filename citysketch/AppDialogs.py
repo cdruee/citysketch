@@ -38,7 +38,7 @@ class AboutDialog(wx.Dialog):
         # right
         szrRight = wx.BoxSizer(wx.VERTICAL)
 
-        version = re.sub('\+.*', '', __version__)
+        version = re.sub(r'\+.*', '', __version__)
         sTitle = f'CitySketch ({version})'
         label = wx.StaticText(self, wx.ID_STATIC, sTitle)
         fntTitle = label.GetFont()
@@ -257,22 +257,20 @@ class HeightDialog(wx.Dialog):
     """Dialog for setting building height by stories or direct height input"""
 
     def __init__(self, parent, stories=3, height=10.0, storey_height=3.3):
-        super().__init__(parent, title="Set Building Height",
-                         size=(320, 250))
+        super().__init__(parent, title="Set Building Height")
 
         self.storey_height = storey_height
         self._updating = False  # Flag to prevent recursive updates
 
-        panel = wx.Panel(self)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         # Mode selection radio buttons
-        mode_box = wx.StaticBox(panel, label="Input Mode")
+        mode_box = wx.StaticBox(self, label="Input Mode")
         mode_sizer = wx.StaticBoxSizer(mode_box, wx.VERTICAL)
         
-        self.stories_radio = wx.RadioButton(panel, label="By number of stories",
+        self.stories_radio = wx.RadioButton(self, label="By number of stories",
                                             style=wx.RB_GROUP)
-        self.height_radio = wx.RadioButton(panel, label="By height (meters)")
+        self.height_radio = wx.RadioButton(self, label="By height (meters)")
         
         mode_sizer.Add(self.stories_radio, 0, wx.ALL, 5)
         mode_sizer.Add(self.height_radio, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 5)
@@ -280,41 +278,36 @@ class HeightDialog(wx.Dialog):
 
         # Stories control
         stories_box = wx.BoxSizer(wx.HORIZONTAL)
-        self.stories_label = wx.StaticText(panel, label="Stories:", size=(80, -1))
+        self.stories_label = wx.StaticText(self, label="Stories:", size=(80, -1))
         stories_box.Add(self.stories_label, 0,
                         wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
-        self.stories_ctrl = wx.SpinCtrl(panel, value=str(stories), min=1,
-                                        max=100)
+        self.stories_ctrl = wx.SpinCtrl(self, value=str(stories), min=1,
+                                        max=100, size=(100, -1))
         stories_box.Add(self.stories_ctrl, 1, wx.EXPAND)
         sizer.Add(stories_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
 
         # Height control
         height_box = wx.BoxSizer(wx.HORIZONTAL)
-        self.height_label = wx.StaticText(panel, label="Height (m):", size=(80, -1))
+        self.height_label = wx.StaticText(self, label="Height (m):", size=(80, -1))
         height_box.Add(self.height_label, 0,
                        wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
-        self.height_ctrl = wx.TextCtrl(panel, value=f"{height:.1f}")
+        self.height_ctrl = wx.TextCtrl(self, value=f"{height:.1f}", size=(100, -1))
         height_box.Add(self.height_ctrl, 1, wx.EXPAND)
         sizer.Add(height_box, 0, wx.EXPAND | wx.ALL, 10)
 
         # Info text
         self.info_text = wx.StaticText(
-            panel, 
+            self, 
             label=f"(Storey height: {storey_height:.1f} m)"
         )
         self.info_text.SetFont(self.info_text.GetFont().MakeSmaller())
         sizer.Add(self.info_text, 0, wx.LEFT | wx.BOTTOM, 10)
 
         # Buttons
-        btn_sizer = wx.StdDialogButtonSizer()
-        ok_btn = wx.Button(panel, wx.ID_OK)
-        cancel_btn = wx.Button(panel, wx.ID_CANCEL)
-        btn_sizer.AddButton(ok_btn)
-        btn_sizer.AddButton(cancel_btn)
-        btn_sizer.Realize()
+        btn_sizer = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
 
-        panel.SetSizerAndFit(sizer)
+        self.SetSizerAndFit(sizer)
 
         # Bind events
         self.stories_radio.Bind(wx.EVT_RADIOBUTTON, self.on_mode_changed)
@@ -333,7 +326,7 @@ class HeightDialog(wx.Dialog):
         """Handle mode radio button change"""
         if self.height_radio.GetValue():
             # Switching from stories to height mode
-            # Disable stories, keep current height
+            # Keep current height value, disable stories
             pass
         else:
             # Switching from height to stories mode
@@ -356,15 +349,18 @@ class HeightDialog(wx.Dialog):
         """Update enabled/disabled state of controls based on mode"""
         stories_mode = self.stories_radio.GetValue()
         
-        # In stories mode: stories enabled, height shows calculated value
+        # In stories mode: stories enabled, height disabled (shows calculated value)
         # In height mode: stories disabled, height editable
         self.stories_ctrl.Enable(stories_mode)
         self.stories_label.Enable(stories_mode)
         
+        self.height_ctrl.Enable(not stories_mode)
+        self.height_label.Enable(not stories_mode)
+        
         # Update visual appearance
         if stories_mode:
             self.height_ctrl.SetBackgroundColour(
-                wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW))
+                wx.SystemSettings.GetColour(wx.SYS_COLOUR_BTNFACE))
         else:
             self.height_ctrl.SetBackgroundColour(
                 wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW))
@@ -381,12 +377,14 @@ class HeightDialog(wx.Dialog):
         self._updating = True
         self.height_ctrl.SetValue(f"{height:.1f}")
         self._updating = False
-        self.height_ctrl.SetBackgroundColour(
-            wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW))
 
     def on_height_changed(self, event):
-        """Update stories when height changes (only in stories mode)"""
+        """Validate height input (only active in height mode)"""
         if self._updating:
+            return
+        
+        # In stories mode, height field is disabled so this shouldn't trigger
+        if self.stories_radio.GetValue():
             return
             
         try:
@@ -397,12 +395,6 @@ class HeightDialog(wx.Dialog):
             else:
                 self.height_ctrl.SetBackgroundColour(
                     wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW))
-                # Only update stories if in stories mode
-                if self.stories_radio.GetValue():
-                    stories = max(1, round(height / self.storey_height))
-                    self._updating = True
-                    self.stories_ctrl.SetValue(stories)
-                    self._updating = False
         except ValueError:
             self.height_ctrl.SetBackgroundColour(wx.Colour(255, 200, 200))
 

@@ -8,6 +8,7 @@ import shlex
 import uuid
 
 from osgeo import osr
+osr.UseExceptions()
 
 from utils import (LL, GK, UT, WM, 
                    gk2ll, ll2gk, ut2ll, ll2ut, 

@@ -2607,8 +2607,9 @@ class MainFrame(wx.Frame):
             return
 
         # Get current values from first selected building
-        stories = self.canvas.selected_buildings.get(0).storeys
-        height = self.canvas.selected_buildings.get(0).height
+        first_building = self.canvas.selected_buildings.get(0)
+        stories = first_building.storeys
+        height = first_building.height
 
         dialog = HeightDialog(self, stories, height,
                               self.canvas.storey_height)

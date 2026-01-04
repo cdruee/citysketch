@@ -41,6 +41,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from osgeo import osr
+osr.UseExceptions()
 
 from .Building import Building
 from .utils import get_epsg2ll

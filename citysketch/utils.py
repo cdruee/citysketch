@@ -4,6 +4,7 @@ import urllib.request
 from enum import Enum
 
 from osgeo import osr
+osr.UseExceptions()
 
 # -------------------------------------------------------------------------
 
