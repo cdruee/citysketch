@@ -2928,36 +2928,75 @@ class MainFrame(wx.Frame):
         """
         Format coordinate as string following the GBA naming convention.
 
+        Format rules:
+        - Longitude: first 3 digits are integer degrees, rest are decimals
+          (e.g., 'e006' = 6°E, 'e16045' = 160.45°E)
+        - Latitude: first 2 digits are integer degrees, rest are decimals
+          (e.g., 'n06' = 6°N, 'n6045' = 60.45°N)
+
         Args:
-            value: Coordinate value
+            value: Coordinate value in degrees
             is_longitude: True for longitude, False for latitude
 
         Returns:
-            Formatted string (e.g., 'e01450' for 14.50 or 'n5000' for 50.00)
+            Formatted string with 2 decimal precision
         """
         if is_longitude:
             direction = 'e' if value >= 0 else 'w'
-            digits = 5
-            abs_val = abs(int(round(value * 100)))
-            return f"{direction}{abs_val:0{digits}d}"
+            # Format as DDDFF where DDD is degrees (3 digits), FF is decimals
+            abs_val = abs(value)
+            int_part = int(abs_val)
+            frac_part = int(round((abs_val - int_part) * 100))
+            return f"{direction}{int_part:03d}{frac_part:02d}"
         else:
             direction = 'n' if value >= 0 else 's'
-            digits = 4
-            abs_val = abs(int(round(value * 100)))
-            return f"{direction}{abs_val:0{digits}d}"
+            # Format as DDFF where DD is degrees (2 digits), FF is decimals
+            abs_val = abs(value)
+            int_part = int(abs_val)
+            frac_part = int(round((abs_val - int_part) * 100))
+            return f"{direction}{int_part:02d}{frac_part:02d}"
 
     def _parse_gba_coordinate_string(self, coord_str: str) -> float:
         """
         Parse a GBA coordinate string back to float.
 
+        Format rules:
+        - Longitude [ew]: first 3 digits are integer degrees, rest are decimals
+        - Latitude [ns]: first 2 digits are integer degrees, rest are decimals
+
+        Examples:
+            Longitude: 'e006' = 6°E, 'e060' = 60°E, 'e160' = 160°E,
+                      'e16045' = 160.45°E, 'e00045' = 0.45°E
+            Latitude: 'n06' = 6°N, 'n60' = 60°N, 
+                     'n6045' = 60.45°N, 'n0045' = 0.45°N
+
         Args:
-            coord_str: Coordinate string (e.g., 'e01450' or 'n5000')
+            coord_str: Coordinate string
 
         Returns:
-            Float value (e.g., 14.50 or 50.00)
+            Float value in degrees
         """
         direction = coord_str[0]
-        value = int(coord_str[1:]) / 100.0
+        digits = coord_str[1:]
+        
+        if direction in ('e', 'w'):
+            # Longitude: first 3 digits are integer part
+            int_digits = 3
+        else:
+            # Latitude: first 2 digits are integer part
+            int_digits = 2
+        
+        int_part = int(digits[:int_digits])
+        frac_str = digits[int_digits:]
+        
+        if frac_str:
+            # Decimal part: divide by 10^len to get proper decimal value
+            frac_part = int(frac_str) / (10 ** len(frac_str))
+        else:
+            frac_part = 0.0
+        
+        value = int_part + frac_part
+        
         if direction in ('w', 's'):
             value = -value
         return value
@@ -2965,6 +3004,7 @@ class MainFrame(wx.Frame):
     def _find_gba_tiles_for_view(self) -> list:
         """
         Find GBA tiles that overlap the current view.
+        Searches recursively through subdirectories.
 
         Returns:
             List of file paths to matching GeoJSON tiles
@@ -2992,32 +3032,38 @@ class MainFrame(wx.Frame):
 
         matching_tiles = []
         
+        # Regex for GBA tile filenames
+        # Format: {lon_left}_{lat_upper}_{lon_right}_{lat_lower}.geojson
+        # Longitude: [ew] followed by 3+ digits (first digit is 10^2)
+        # Latitude: [ns] followed by 2+ digits (first digit is 10^1)
+        gba_pattern = re.compile(
+            r'^([ew]\d{3,})_([ns]\d{2,})_([ew]\d{3,})_([ns]\d{2,})\.geojson$'
+        )
+        
         try:
-            for filename in os.listdir(gba_dir):
-                if not filename.endswith('.geojson'):
-                    continue
-                
-                # Parse tile bounds from filename
-                # Format: {lon_left}_{lat_upper}_{lon_right}_{lat_lower}_lod1.geojson
-                parts = filename.replace('.geojson', '').replace('_lod1', '').split('_')
-                if len(parts) < 4:
-                    continue
-                
-                try:
-                    tile_lon_left = self._parse_gba_coordinate_string(parts[0])
-                    tile_lat_upper = self._parse_gba_coordinate_string(parts[1])
-                    tile_lon_right = self._parse_gba_coordinate_string(parts[2])
-                    tile_lat_lower = self._parse_gba_coordinate_string(parts[3])
+            # Walk through directory and all subdirectories
+            for root, dirs, files in os.walk(gba_dir):
+                for filename in files:
+                    match = gba_pattern.match(filename)
+                    if not match:
+                        continue
                     
-                    # Check for overlap with view
-                    # Tiles overlap if: not (tile_right < view_left or tile_left > view_right
-                    #                       or tile_top < view_bottom or tile_bottom > view_top)
-                    if not (tile_lon_right < view_min_lon or tile_lon_left > view_max_lon or
-                            tile_lat_upper < view_min_lat or tile_lat_lower > view_max_lat):
-                        matching_tiles.append(os.path.join(gba_dir, filename))
+                    try:
+                        tile_lon_left = self._parse_gba_coordinate_string(match.group(1))
+                        tile_lat_upper = self._parse_gba_coordinate_string(match.group(2))
+                        tile_lon_right = self._parse_gba_coordinate_string(match.group(3))
+                        tile_lat_lower = self._parse_gba_coordinate_string(match.group(4))
                         
-                except (ValueError, IndexError):
-                    # Skip files with unparseable names
+                        # Check for overlap with view
+                        # Tiles overlap if: not (tile_right < view_left or tile_left > view_right
+                        #                       or tile_top < view_bottom or tile_bottom > view_top)
+                        if not (tile_lon_right < view_min_lon or tile_lon_left > view_max_lon or
+                                tile_lat_upper < view_min_lat or tile_lat_lower > view_max_lat):
+                            matching_tiles.append(os.path.join(root, filename))
+                            
+                    except (ValueError, IndexError):
+                        # Skip files with unparseable names
+                        continue
                     continue
                     
         except OSError as e:
