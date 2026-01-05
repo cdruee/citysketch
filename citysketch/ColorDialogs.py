@@ -6,7 +6,7 @@ Includes color configuration and application settings.
 import os
 import wx
 
-from .AppSettings import Settings, settings
+from .AppSettings import Settings, settings, save_settings
 
 
 class ColorSettingsDialog(wx.Dialog):
@@ -14,8 +14,9 @@ class ColorSettingsDialog(wx.Dialog):
     Dialog for configuring application settings.
     
     Includes:
-    - Color settings for buildings, selection, etc.
     - Path settings (Global Building Atlas directory)
+    - Import settings (tolerances for GeoJSON/AUSTAL import)
+    - Color settings for buildings, selection, etc.
     """
 
     def __init__(self, parent, colorset: Settings):
@@ -25,10 +26,16 @@ class ColorSettingsDialog(wx.Dialog):
         self.colorset = colorset
         self.color_buttons = {}
         self.original_colors = {}
+        self.original_settings = {}
+        self.setting_controls = {}
 
         # Store original colors for cancel
         for key in colorset.get_all_keys():
             self.original_colors[key] = colorset.get(key)
+
+        # Store original settings for cancel
+        for key in settings.get_all_keys():
+            self.original_settings[key] = settings.get(key)
 
         # Main sizer
         main_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -39,6 +46,10 @@ class ColorSettingsDialog(wx.Dialog):
         # Paths panel
         paths_panel = self._create_paths_panel(notebook)
         notebook.AddPage(paths_panel, "Paths")
+
+        # Import settings panel
+        import_panel = self._create_import_panel(notebook)
+        notebook.AddPage(import_panel, "Import")
 
         # Colors panel
         colors_panel = self._create_colors_panel(notebook)
@@ -51,7 +62,7 @@ class ColorSettingsDialog(wx.Dialog):
         main_sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
 
         self.SetSizer(main_sizer)
-        self.SetSize((500, 450))
+        self.SetSize((550, 500))
         self.Centre()
 
         # Bind events
@@ -101,6 +112,138 @@ class ColorSettingsDialog(wx.Dialog):
 
         panel.SetSizer(sizer)
         return panel
+
+    def _create_import_panel(self, parent):
+        """Create the import settings panel"""
+        panel = wx.ScrolledWindow(parent)
+        panel.SetScrollRate(0, 20)
+        
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # GeoJSON Import Settings
+        geojson_box = wx.StaticBox(panel, label="GeoJSON Import")
+        geojson_sizer = wx.StaticBoxSizer(geojson_box, wx.VERTICAL)
+
+        # HEIGHT_TOLERANCE
+        self._add_float_setting(
+            panel, geojson_sizer, 'HEIGHT_TOLERANCE',
+            "Height tolerance for merging:", 
+            suffix="(ratio, e.g., 0.10 = 10%)",
+            min_val=0.0, max_val=1.0
+        )
+
+        # ANGLE_TOLERANCE
+        self._add_float_setting(
+            panel, geojson_sizer, 'ANGLE_TOLERANCE',
+            "Angle tolerance for rectangles:",
+            suffix="degrees",
+            min_val=1.0, max_val=45.0
+        )
+
+        # DISTANCE_TOLERANCE
+        self._add_float_setting(
+            panel, geojson_sizer, 'DISTANCE_TOLERANCE',
+            "Distance tolerance for simplification:",
+            suffix="meters",
+            min_val=0.1, max_val=10.0
+        )
+
+        # MAX_NON_OVERLAP_RATIO
+        self._add_float_setting(
+            panel, geojson_sizer, 'MAX_NON_OVERLAP_RATIO',
+            "Max non-overlap ratio for fitting:",
+            suffix="(ratio, e.g., 0.20 = 20%)",
+            min_val=0.0, max_val=1.0
+        )
+
+        sizer.Add(geojson_sizer, 0, wx.EXPAND | wx.ALL, 10)
+
+        # AUSTAL Import Settings
+        austal_box = wx.StaticBox(panel, label="AUSTAL Import")
+        austal_sizer = wx.StaticBoxSizer(austal_box, wx.VERTICAL)
+
+        # MAX_CENTER_DISTANCE
+        self._add_float_setting(
+            panel, austal_sizer, 'MAX_CENTER_DISTANCE',
+            "Max center distance:",
+            suffix="meters",
+            min_val=1.0, max_val=100.0
+        )
+
+        sizer.Add(austal_sizer, 0, wx.EXPAND | wx.ALL, 10)
+
+        # Reset button
+        reset_btn = wx.Button(panel, label="Reset Import Settings to Defaults")
+        reset_btn.Bind(wx.EVT_BUTTON, self.on_reset_import_settings)
+        sizer.Add(reset_btn, 0, wx.ALIGN_CENTER | wx.ALL, 10)
+
+        panel.SetSizer(sizer)
+        return panel
+
+    def _add_float_setting(self, panel, sizer, key, label, suffix="", 
+                          min_val=None, max_val=None):
+        """Add a float setting control to the panel"""
+        row_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        # Label
+        lbl = wx.StaticText(panel, label=label, size=(200, -1))
+        row_sizer.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+
+        # Value control
+        current_value = settings.get(key)
+        ctrl = wx.TextCtrl(panel, value=f"{current_value:.2f}", size=(80, -1))
+        ctrl.key = key
+        ctrl.min_val = min_val
+        ctrl.max_val = max_val
+        ctrl.Bind(wx.EVT_TEXT, self._on_setting_changed)
+        self.setting_controls[key] = ctrl
+        row_sizer.Add(ctrl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+
+        # Suffix/units
+        if suffix:
+            suffix_lbl = wx.StaticText(panel, label=suffix)
+            suffix_lbl.SetFont(suffix_lbl.GetFont().MakeSmaller())
+            row_sizer.Add(suffix_lbl, 0, wx.ALIGN_CENTER_VERTICAL)
+
+        sizer.Add(row_sizer, 0, wx.EXPAND | wx.ALL, 5)
+
+    def _on_setting_changed(self, event):
+        """Validate setting input"""
+        ctrl = event.GetEventObject()
+        try:
+            value = float(ctrl.GetValue())
+            valid = True
+            if ctrl.min_val is not None and value < ctrl.min_val:
+                valid = False
+            if ctrl.max_val is not None and value > ctrl.max_val:
+                valid = False
+            
+            if valid:
+                ctrl.SetBackgroundColour(
+                    wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW))
+            else:
+                ctrl.SetBackgroundColour(wx.Colour(255, 200, 200))
+        except ValueError:
+            ctrl.SetBackgroundColour(wx.Colour(255, 200, 200))
+        ctrl.Refresh()
+
+    def on_reset_import_settings(self, event):
+        """Reset import settings to defaults"""
+        result = wx.MessageBox(
+            "Reset all import settings to their default values?",
+            "Confirm Reset",
+            wx.YES_NO | wx.ICON_QUESTION
+        )
+        if result == wx.YES:
+            import_keys = ['HEIGHT_TOLERANCE', 'ANGLE_TOLERANCE', 
+                          'DISTANCE_TOLERANCE', 'MAX_NON_OVERLAP_RATIO',
+                          'MAX_CENTER_DISTANCE']
+            for key in import_keys:
+                if key in self.setting_controls:
+                    default_val = settings.get_default(key)
+                    self.setting_controls[key].SetValue(f"{default_val:.2f}")
+                    self.setting_controls[key].SetBackgroundColour(
+                        wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOW))
 
     def _create_colors_panel(self, parent):
         """Create the colors settings panel"""
@@ -177,8 +320,8 @@ class ColorSettingsDialog(wx.Dialog):
                 self.gba_status.SetLabel(
                     f"Status: Valid directory ({len(geojson_files)} .geojson files found)")
                 self.gba_status.SetForegroundColour(wx.Colour(0, 128, 0))
-            except OSError as e:
-                self.gba_status.SetLabel(f"Status: Error reading directory")
+            except OSError:
+                self.gba_status.SetLabel("Status: Error reading directory")
                 self.gba_status.SetForegroundColour(wx.Colour(200, 0, 0))
         else:
             self.gba_status.SetLabel("Status: Directory not found")
@@ -241,13 +384,37 @@ class ColorSettingsDialog(wx.Dialog):
                 btn.Refresh()
 
     def on_ok(self, event):
-        """Handle OK button - save settings"""
+        """Handle OK button - save all settings"""
         # Save GBA directory
         settings.set('GBA_DIRECTORY', self.gba_path_ctrl.GetValue())
+        
+        # Save import settings
+        for key, ctrl in self.setting_controls.items():
+            try:
+                value = float(ctrl.GetValue())
+                # Clamp to valid range
+                if ctrl.min_val is not None:
+                    value = max(ctrl.min_val, value)
+                if ctrl.max_val is not None:
+                    value = min(ctrl.max_val, value)
+                settings.set(key, value)
+            except ValueError:
+                # Keep existing value on error
+                pass
+        
+        # Save to file
+        save_settings()
+        
         self.EndModal(wx.ID_OK)
 
     def on_cancel(self, event):
-        """Handle Cancel button - restore original colors"""
+        """Handle Cancel button - restore original values"""
+        # Restore colors
         for key, color in self.original_colors.items():
             self.colorset.set(key, color)
+        
+        # Restore settings
+        for key, value in self.original_settings.items():
+            settings.set(key, value)
+        
         self.EndModal(wx.ID_CANCEL)

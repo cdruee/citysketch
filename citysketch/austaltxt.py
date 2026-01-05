@@ -8,66 +8,32 @@ import shlex
 import uuid
 
 from osgeo import osr
-osr.UseExceptions()
 
-from utils import (LL, GK, UT, WM, 
-                   gk2ll, ll2gk, ut2ll, ll2ut, 
-                   ll2wm, wm2ll, wm2ut, ut2wm, wm2gk, gk2wm,
-                   math2geo, geo2math)
+from utils import LL, GK, UT, gk2ll, ll2gk, ut2ll, ll2ut, math2geo, \
+    geo2math
 from .Building import Building
+from .AppSettings import settings as app_settings
 
 logger = logging.getLogger(__name__)
 osr.UseExceptions()
 
 # -------------------------------------------------------------------------
 
-MAX_CENTER_DISTANCE = 10.  # m
+def get_max_center_distance():
+    """Get max center distance from settings."""
+    return app_settings.get('MAX_CENTER_DISTANCE')
+
+# Legacy constant for backward compatibility
+MAX_CENTER_DISTANCE = 10.  # Default: meters
 
 # -------------------------------------------------------------------------
 
 def save_to_austaltxt(path, lat, lon, buildings, rs='ut'):
-    """
-    Write buildings to austaltxt file.
-    
-    Building coordinates are in Web Mercator (EPSG:3857) relative to center.
-    They are converted to the appropriate reference system (UT or GK) for storage.
-    
-    :param path: Path to the austaltxt file
-    :param lat: Center latitude (WGS84)
-    :param lon: Center longitude (WGS84)
-    :param buildings: List of Building objects with Web Mercator coordinates
-    :param rs: Reference system for file ('ut' or 'gk')
-    """
+    """Write buildings to austaltxt file"""
 
     FMT = '{:.2f}'
-    
-    # Get center in Web Mercator
-    center_wm_x, center_wm_y = ll2wm(lat, lon)
-    
-    # Define transform from Web Mercator world coords to file coords
-    if rs == 'ut':
-        def transform(wx, wy):
-            # World coords are relative to center in Web Mercator
-            wm_x = wx + center_wm_x
-            wm_y = wy + center_wm_y
-            # Convert to UTM
-            ux, uy = wm2ut(wm_x, wm_y)
-            # Make relative to center in UTM
-            center_ux, center_uy = ll2ut(lat, lon)
-            return ux - center_ux, uy - center_uy
-    elif rs == 'gk':
-        def transform(wx, wy):
-            # World coords are relative to center in Web Mercator
-            wm_x = wx + center_wm_x
-            wm_y = wy + center_wm_y
-            # Convert to GK
-            gx, gy = wm2gk(wm_x, wm_y)
-            # Make relative to center in GK
-            center_gx, center_gy = ll2gk(lat, lon)
-            return gx - center_gx, gy - center_gy
-    else:
-        raise ValueError(f"Not a valid reference system code {rs}")
-    
+    def transform(x,y):
+        return x,y
     if os.path.exists(path):
         austxt = get_austxt(path)
     else:
@@ -94,8 +60,10 @@ def save_to_austaltxt(path, lat, lon, buildings, rs='ut'):
             app_ux, app_uy = ll2ut(lat, lon)
             austxt["ux"] = [app_ux]
             austxt["uy"] = [app_uy]
+        else:
+            raise ValueError(f"Not a valid reference system code {rs}")
 
-    if dist > MAX_CENTER_DISTANCE:
+    if dist > get_max_center_distance():
         raise ValueError(f"Center position "
                          f"in file {os.path.basename(path)} "
                          f"does not match current center position. "
@@ -129,43 +97,13 @@ def save_to_austaltxt(path, lat, lon, buildings, rs='ut'):
 # -------------------------------------------------------------------------
 
 def load_from_austaltxt(path):
-    """
-    Load buildings from austaltxt file.
-    
-    File coordinates are in UTM (ux/uy) or Gauss-Krüger (gx/gy).
-    Building coordinates are converted to Web Mercator (EPSG:3857)
-    relative to the center position.
-    
-    :param path: Path to the austaltxt file
-    :return: Tuple of (lat, lon, buildings) where buildings have 
-        Web Mercator coordinates relative to center
-    """
+    """Write buildings to austaltxt file"""
     austxt = get_austxt(path)
 
     if "ux" in austxt and "uy" in austxt:
         lat, lon = ut2ll(austxt['ux'][0], austxt['uy'][0])
-        center_ux, center_uy = austxt['ux'][0], austxt['uy'][0]
-        def transform(x, y):
-            # x, y are relative to center in UTM
-            ux = x + center_ux
-            uy = y + center_uy
-            # Convert to Web Mercator
-            wm_x, wm_y = ut2wm(ux, uy)
-            # Make relative to center in Web Mercator
-            center_wm_x, center_wm_y = ll2wm(lat, lon)
-            return wm_x - center_wm_x, wm_y - center_wm_y
     elif "gx" in austxt and "gy" in austxt:
         lat, lon = gk2ll(austxt['gx'][0], austxt['gy'][0])
-        center_gx, center_gy = austxt['gx'][0], austxt['gy'][0]
-        def transform(x, y):
-            # x, y are relative to center in GK
-            gx = x + center_gx
-            gy = y + center_gy
-            # Convert to Web Mercator
-            wm_x, wm_y = gk2wm(gx, gy)
-            # Make relative to center in Web Mercator
-            center_wm_x, center_wm_y = ll2wm(lat, lon)
-            return wm_x - center_wm_x, wm_y - center_wm_y
     else:
         raise ValueError(f"No valid reference position "
                          f"in {os.path.basename(path)}")
@@ -191,23 +129,20 @@ def load_from_austaltxt(path):
             if ba[i] <= 0.:
                 # round building
                 a = ba[i]
-                b = - bb[i] / 2.  # diameter -> radius
+                b = - bb[i] / 2.  # diameeter -> radius
             else:
                 # block building
                 a = ba[i]
                 b = bb[i]
 
-            # Transform coordinates from file system to Web Mercator
-            wm_x, wm_y = transform(xb[i], yb[i])
-            
             bldg = Building(
                 id=str(uuid.uuid4()),
-                x1=wm_x,
-                y1=wm_y,
+                x1=xb[i],
+                y1=yb[i],
                 a=a,
                 b=b,
                 height=cb[i],
-                storeys=None,
+                storeys=1,
                 rotation=geo2math(wb[i])
             )
             buildings.append(bldg)

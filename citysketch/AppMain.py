@@ -39,7 +39,7 @@ from ._version import __version__, __version_tuple__
 from .AppDialogs import (AboutDialog, HeightDialog,
                         BasemapDialog, CenterLocationDialog, GeoTiffDialog)
 from .App3dview import OPENGL_SUPPORT, Building3DViewer
-from .AppSettings import colorset, settings
+from .AppSettings import colorset, settings, load_settings, save_settings
 from .Building import Building, BuildingGroup
 from .ColorDialogs import ColorSettingsDialog
 from .GeoJSON import GeoJsonBuilding, GeoJsonBuildingCache, BuildingMerger
@@ -3638,6 +3638,9 @@ class CityJSONApp(wx.App):
     """Main application class"""
 
     def OnInit(self):
+        # Load persistent settings from config file
+        load_settings()
+        
         self.frame = MainFrame()
         return True
 

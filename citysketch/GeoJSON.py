@@ -58,11 +58,31 @@ from .building_simplification import (
     Rectangle
 )
 
-# Module constants
-HEIGHT_TOLERANCE = 0.10  # 10% tolerance for height matching
-ANGLE_TOLERANCE = 15.0  # degrees for rectangle detection
-DISTANCE_TOLERANCE = 2.0  # meters for shape simplification
-MAX_NON_OVERLAP_RATIO = 0.20  # Maximum allowed non-overlapping area ratio (20%)
+# Module constants - these provide defaults, but actual values come from settings
+# Import settings for dynamic values
+from .AppSettings import settings as app_settings
+
+def get_height_tolerance():
+    """Get height tolerance from settings."""
+    return app_settings.get('HEIGHT_TOLERANCE')
+
+def get_angle_tolerance():
+    """Get angle tolerance from settings."""
+    return app_settings.get('ANGLE_TOLERANCE')
+
+def get_distance_tolerance():
+    """Get distance tolerance from settings."""
+    return app_settings.get('DISTANCE_TOLERANCE')
+
+def get_max_non_overlap_ratio():
+    """Get max non-overlap ratio from settings."""
+    return app_settings.get('MAX_NON_OVERLAP_RATIO')
+
+# Legacy constants for backward compatibility (use getter functions instead)
+HEIGHT_TOLERANCE = 0.10  # Default: 10% tolerance for height matching
+ANGLE_TOLERANCE = 15.0  # Default: degrees for rectangle detection
+DISTANCE_TOLERANCE = 2.0  # Default: meters for shape simplification
+MAX_NON_OVERLAP_RATIO = 0.20  # Default: Maximum allowed non-overlapping area ratio (20%)
 
 
 def extract_epsg(crs_object):
@@ -696,7 +716,7 @@ class RectangleFitter:
                 fitted_corners = RectangleFitter.simplify_to_rectangle(coordinates)
                 non_overlap = RectangleFitter._calculate_fit_quality(
                     coordinates, fitted_corners)
-                return non_overlap <= MAX_NON_OVERLAP_RATIO
+                return non_overlap <= get_max_non_overlap_ratio()
             return True
         
         if len(coordinates) > 8:
@@ -719,7 +739,7 @@ class RectangleFitter:
             angles.append(angle)
 
         right_angles = sum(
-            1 for a in angles if abs(a - 90) < ANGLE_TOLERANCE)
+            1 for a in angles if abs(a - 90) < get_angle_tolerance())
         has_rectangular_angles = right_angles >= len(coordinates) - 2
         
         if not has_rectangular_angles:
@@ -730,7 +750,7 @@ class RectangleFitter:
             fitted_corners = RectangleFitter.simplify_to_rectangle(coordinates)
             non_overlap = RectangleFitter._calculate_fit_quality(
                 coordinates, fitted_corners)
-            return non_overlap <= MAX_NON_OVERLAP_RATIO
+            return non_overlap <= get_max_non_overlap_ratio()
         
         return True
 
@@ -811,7 +831,7 @@ class RectangleFitter:
         rotated_coords = rotate_polygon(coordinates, -angle, centroid)
         
         # Step 3: Simplify to rectilinear shape
-        simplifier = BuildingSimplifier(sigma_max=DISTANCE_TOLERANCE)
+        simplifier = BuildingSimplifier(sigma_max=get_distance_tolerance())
         simplified = simplifier.simplify(rotated_coords)
         
         # Step 4: Partition into minimal rectangles
@@ -1078,7 +1098,7 @@ class BuildingMerger:
 
     @staticmethod
     def merge_buildings_to_geojson(buildings: List,
-                                   height_tolerance: float = HEIGHT_TOLERANCE) -> \
+                                   height_tolerance: float = None) -> \
     Optional[GeoJsonBuilding]:
         """
         Merge a list of CitySketch buildings into a single GeoJSON building.
@@ -1089,7 +1109,7 @@ class BuildingMerger:
         :param buildings: List of Building objects to merge.
         :type buildings: List[Building]
         :param height_tolerance: Maximum relative height difference allowed
-            for merging. Default is :data:`HEIGHT_TOLERANCE` (10%).
+            for merging. Default is from settings (HEIGHT_TOLERANCE, typically 10%).
         :type height_tolerance: float
         :returns: Merged GeoJsonBuilding, or None if buildings cannot be merged.
         :rtype: GeoJsonBuilding or None
@@ -1099,6 +1119,10 @@ class BuildingMerger:
             The merged building uses the convex hull of all input building
             corners, which may not perfectly represent complex merged shapes.
         """
+        # Use settings default if not specified
+        if height_tolerance is None:
+            height_tolerance = get_height_tolerance()
+            
         if not buildings:
             return None
 
