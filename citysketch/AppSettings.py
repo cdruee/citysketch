@@ -177,35 +177,44 @@ class Settings:
         self._values[key].value = self._defaults[key].value
 
     def from_dict(self, dictionary: Dict):
-        """Load settings from a dictionary."""
+        """Load settings from a dictionary (case-insensitive key matching)."""
         self._ensure_initialized()
+        
+        # Build a case-insensitive lookup map: lowercase -> original key
+        key_map = {k.lower(): k for k in self._defaults.keys()}
+        
         for k, v in dictionary.items():
-            if k not in self._defaults.keys():
+            # Look up the original key using case-insensitive match
+            original_key = key_map.get(k.lower())
+            if original_key is None:
                 # Skip unknown keys (for forward compatibility)
                 continue
             try:
-                default_value = self._defaults[k].value
+                default_value = self._defaults[original_key].value
                 
                 # Handle wx.Colour specially
                 if isinstance(default_value, wx.Colour):
                     if isinstance(v, (list, tuple)) and len(v) >= 3:
-                        self._values[k].value = wx.Colour(*v)
+                        self._values[original_key].value = wx.Colour(*v)
                     elif isinstance(v, str):
                         # Parse string representation like "200, 200, 200, 255"
                         parts = [int(x.strip()) for x in v.split(',')]
                         if len(parts) >= 3:
-                            self._values[k].value = wx.Colour(*parts)
+                            self._values[original_key].value = wx.Colour(*parts)
                 else:
                     # For other types, interpret from string if needed
                     if isinstance(v, str):
                         # Handle boolean specially
                         if isinstance(default_value, bool):
                             value = v.lower() in ('true', 'yes', '1', 'on')
+                        # Handle empty strings for string types
+                        elif isinstance(default_value, str):
+                            value = v
                         else:
                             value = ast.literal_eval(v)
                     else:
                         value = v
-                    self._values[k].value = type(default_value)(value)
+                    self._values[original_key].value = type(default_value)(value)
             except (ValueError, TypeError, SyntaxError):
                 # Keep default on parse error
                 pass
