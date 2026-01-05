@@ -226,6 +226,19 @@ Contains:
 * Color settings
 * Editor preferences
 
+Settings File
+~~~~~~~~~~~~~~
+
+Application settings are stored in:
+
+* **Linux**: ``~/.config/citysketch/settings.ini``
+* **Windows**: ``%APPDATA%\citysketch\settings.ini``
+* **macOS**: ``~/Library/Application Support/citysketch/settings.ini``
+
+Settings include color preferences, import tolerances, and configured paths.
+The file is created automatically on first run and updated when you change
+settings in Edit → Settings.
+
 Cache Directory
 ~~~~~~~~~~~~~~~
 

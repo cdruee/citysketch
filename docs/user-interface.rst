@@ -35,6 +35,16 @@ File Menu
 **Save As (Ctrl+Shift+S)**
    Saves the project with a new filename or location.
 
+**Import Global Building Atlas**
+   Imports building footprints from Global Building Atlas GeoJSON tiles that overlap
+   the current view. This menu item is only enabled when a valid GBA directory is
+   configured in Settings. See :ref:`gba-import` for details.
+
+**Import from GeoJSON**
+   Imports building footprints from a GeoJSON file. Buildings are converted to
+   CitySketch format using rectangle fitting algorithms. Complex shapes like
+   L-shaped or T-shaped buildings are decomposed into multiple rectangles.
+
 **Import from AUSTAL**
    Imports building data from an AUSTAL atmospheric modeling file (austal.txt).
 
@@ -47,8 +57,18 @@ File Menu
 Edit Menu
 ~~~~~~~~~~
 
+**Undo (Ctrl+Z)**
+   Undoes the last action (building creation, deletion, move, resize, or property change).
+
+**Redo (Ctrl+Y)**
+   Redoes the previously undone action.
+
 **Select Basemap**
    Opens the basemap selection dialog to choose map provider and location.
+
+**Go to Location**
+   Opens dialog to enter coordinates and navigate to a specific location. 
+   Optionally places a marker at the target location.
 
 **Zoom to Buildings (Ctrl+0)**
    Adjusts zoom and pan to fit all buildings in the view.
@@ -65,8 +85,14 @@ Edit Menu
 **Set Storey Height**
    Sets the default height per building storey (affects height calculations).
 
-**Color Settings**
-   Opens dialog to customize application colors and appearance.
+**Settings**
+   Opens the Settings dialog with three tabs:
+   
+   * **Paths**: Configure Global Building Atlas directory
+   * **Import**: Adjust tolerances for GeoJSON and AUSTAL import
+   * **Colors**: Customize application colors and appearance
+   
+   See :ref:`settings-dialog` for details.
 
 Help Menu
 ~~~~~~~~~~
@@ -293,29 +319,82 @@ Map-Dependent Display
 Customization
 ----------------
 
-Color Settings
+.. _settings-dialog:
+
+Settings Dialog
 ~~~~~~~~~~~~~~~~~
 
-Access through Edit → Color Settings to customize:
+Access through Edit → Settings to configure application behavior.
+
+**Paths Tab**
+
+Configure file system paths:
+
+* **Global Building Atlas Directory**: Path to GBA GeoJSON tiles for bulk import.
+  When set to a valid directory containing .geojson files, enables the
+  "Import Global Building Atlas" menu item.
+
+**Import Tab**
+
+Adjust tolerances for building import from GeoJSON and AUSTAL files:
+
+* **Height Tolerance**: Maximum relative height difference for merging adjacent
+  buildings (default: 0.10 = 10%). Buildings with similar heights can be merged
+  into single footprints.
+
+* **Angle Tolerance**: Maximum deviation from 90° for rectangle detection
+  (default: 15°). Polygons with mostly right angles are simplified to rectangles.
+
+* **Distance Tolerance**: Maximum distance for shape simplification in meters
+  (default: 2.0m). Controls how much detail is preserved when simplifying
+  complex building footprints.
+
+* **Max Non-Overlap Ratio**: Maximum allowed ratio of non-overlapping area
+  between original polygon and fitted rectangle (default: 0.20 = 20%).
+  If the fit is worse than this threshold, the building is decomposed into
+  multiple rectangles instead.
+
+* **Max Center Distance**: Maximum distance in meters between the application's
+  center and an AUSTAL file's center for import/export operations (default: 10m).
+
+**Colors Tab**
+
+Customize application colors:
 
 * **Building Colors**: Fill and border colors for normal and selected states
 * **Interface Colors**: Grid, handles, preview colors
 * **Basemap Colors**: Empty tile and border colors
 
-The color dialog provides:
+The color controls provide:
 
-* **Predefined Colors**: Common color choices
-* **Manual Input**: RGB/RGBA values and hex codes  
-* **Opacity Control**: Alpha channel adjustment
-* **Preview**: Real-time color preview
+* **Color Button**: Click to open color picker
+* **Reset Button**: Reset individual color to default
+* **Reset All**: Reset all colors to defaults
 
 Application Preferences
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Various settings are automatically saved:
+Settings are automatically saved to a configuration file:
 
-* **Window Size**: Application window dimensions
-* **Last Location**: Map center coordinates
-* **Zoom Level**: Current view zoom
-* **Snap Setting**: Whether snapping is enabled
-* **Storey Height**: Default height per storey
+* **Linux**: ``~/.config/citysketch/settings.ini``
+* **Windows**: ``%APPDATA%\citysketch\settings.ini``
+* **macOS**: ``~/Library/Application Support/citysketch/settings.ini``
+
+The settings file uses INI format and can be edited manually if needed:
+
+.. code-block:: ini
+
+   [settings]
+   zoom_step_percent = 20
+   gba_directory = /path/to/gba/tiles
+   height_tolerance = 0.1
+   angle_tolerance = 15.0
+   distance_tolerance = 2.0
+   max_non_overlap_ratio = 0.2
+   max_center_distance = 10.0
+
+   [colors]
+   col_bldg_in = 200, 200, 200, 180
+   col_bldg_out = 100, 100, 100, 255
+   col_sel_bldg_in = 150, 180, 255, 180
+   ...

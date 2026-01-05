@@ -16,6 +16,10 @@ Quick Reference Card
    Ctrl + N              New project
    Ctrl + O              Open project
    Ctrl + S              Save project
+   Ctrl + Shift + S      Save project as
+   **Edit Operations**
+   Ctrl + Z              Undo last action
+   Ctrl + Y              Redo previously undone action
    **View Controls**
    Ctrl + 0              Zoom to fit buildings
    Ctrl + +/-            Zoom in/out

@@ -231,6 +231,107 @@ Usage Guidelines
     - No editor-specific settings
     - Read-only (CitySketch doesn't import CityJSON)
 
+GeoJSON Format (.geojson)
+----------------------------
+
+CitySketch can import building footprints from GeoJSON files, a widely-used
+format for geographic data exchange.
+
+Supported Structure
+~~~~~~~~~~~~~~~~~~~~
+
+CitySketch imports GeoJSON files with Polygon or MultiPolygon geometries:
+
+.. code-block:: json
+
+   {
+     "type": "FeatureCollection",
+     "features": [
+       {
+         "type": "Feature",
+         "properties": {
+           "height": 12.5,
+           "building:levels": 4
+         },
+         "geometry": {
+           "type": "Polygon",
+           "coordinates": [[[lon1, lat1], [lon2, lat2], ...]]
+         }
+       }
+     ]
+   }
+
+**Recognized Properties**:
+
+* ``height``: Building height in meters
+* ``building:levels`` or ``levels``: Number of stories (used to calculate height
+  if height property is missing)
+* ``id``: Feature identifier (preserved as building ID)
+
+Coordinate Reference Systems
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+CitySketch supports various CRS definitions:
+
+* **EPSG codes**: ``"EPSG:4326"``, ``"urn:ogc:def:crs:EPSG::4326"``
+* **Default**: WGS84 (EPSG:4326) if no CRS is specified
+
+Rectangle Fitting
+~~~~~~~~~~~~~~~~~~
+
+Since CitySketch works with rectangular buildings, imported polygons are
+converted using intelligent fitting algorithms:
+
+1. **Simple Rectangles**: Polygons with mostly right angles are simplified
+   to single rectangles using PCA-based orientation detection.
+
+2. **Complex Shapes**: L-shaped, T-shaped, and other complex footprints are
+   decomposed into multiple rectangles using the Ferrari-Sankar-Sklansky
+   partitioning algorithm.
+
+3. **Quality Check**: Fitted rectangles must have at least 80% overlap with
+   the original polygon (configurable via MAX_NON_OVERLAP_RATIO setting).
+
+Import Tolerances
+~~~~~~~~~~~~~~~~~~
+
+The following settings (configurable in Edit → Settings → Import) control
+the import behavior:
+
+* **Angle Tolerance**: How close to 90° angles must be for rectangle detection
+* **Distance Tolerance**: Simplification threshold for complex shapes
+* **Max Non-Overlap Ratio**: Maximum acceptable fitting error
+
+.. _gba-import:
+
+Global Building Atlas Import
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+CitySketch supports bulk import from Global Building Atlas (GBA) tile sets.
+
+**Setup**:
+
+1. Download GBA tiles for your region of interest
+2. Configure the GBA directory in Edit → Settings → Paths
+
+**Tile Naming Convention**:
+
+GBA tiles use a specific filename format encoding the tile bounds::
+
+   {lon_left}_{lat_upper}_{lon_right}_{lat_lower}.geojson
+
+Where coordinates use a special encoding:
+
+* Longitude: 3 integer digits + optional decimals (e.g., ``e00675`` = 6.75°E)
+* Latitude: 2 integer digits + optional decimals (e.g., ``n4987`` = 49.87°N)
+
+**Import Process**:
+
+1. Go to File → Import Global Building Atlas
+2. CitySketch scans subdirectories for tiles overlapping the current view
+3. Confirm the import when prompted with tile count
+4. Buildings are imported and converted to CitySketch format
+
 AUSTAL Format (austal.txt)
 ----------------------------
 
@@ -340,21 +441,116 @@ File Format Comparison
    :widths: auto
 
    =================  ========== ========  ===========  ========  ==============
-   Feature            .csp       CityJSON  AUSTAL       GeoTIFF   Usage
+   Feature            .csp       GeoJSON   AUSTAL       GeoTIFF   Usage
    =================  ========== ========  ===========  ========  ==============
    **Data Type**
    Project Storage    ✓          ✗         ✗            ✗         Native
-   Building Export    ✓          ✓         ✓            ✗         Exchange
+   Building Import    ✗          ✓         ✓            ✗         Exchange
+   Building Export    ✓          ✗         ✓            ✗         Exchange
    Background Data    ✗          ✗         ✗            ✓         Reference
    **Properties**
    Building Geom.     ✓          ✓         ✓            ✗         All
-   Rotation           ✓          ✓         ✗            ✗         Advanced
+   Rotation           ✓          ✓         ✓            ✗         Advanced
    Editor Settings    ✓          ✗         ✗            ✗         Workflow
    Color Settings     ✓          ✗         ✗            ✗         Appearance
-   3D Geometry        ✓          ✓         ✗            ✗         Visualization
+   3D Geometry        ✓          ✗         ✗            ✗         Visualization
    **Compatibility**
-   CitySketch I/O     Read/Write planned   Read/Write   Read       Native
+   CitySketch I/O     Read/Write Read      Read/Write   Read      Native
    External Tools     ✗          ✓         ✓            ✓         Integration
    Standard Format    ✗          ✓         ✗            ✓         Interchange
    =================  ========== ========  ===========  ========  ==============
+
+
+Settings File Format (settings.ini)
+------------------------------------
+
+CitySketch stores application settings in an INI format configuration file.
+
+File Location
+~~~~~~~~~~~~~~
+
+The settings file is stored in a platform-specific location:
+
+* **Linux**: ``~/.config/citysketch/settings.ini``
+* **Windows**: ``%APPDATA%\citysketch\settings.ini``
+* **macOS**: ``~/Library/Application Support/citysketch/settings.ini``
+
+File Structure
+~~~~~~~~~~~~~~~
+
+The settings file uses standard INI format with two sections:
+
+.. code-block:: ini
+
+   # CitySketch Settings
+   # This file is auto-generated. Edit with care.
+
+   [settings]
+   zoom_step_percent = 20
+   circle_corners = 12
+   gba_directory = /path/to/gba/tiles
+   height_tolerance = 0.1
+   angle_tolerance = 15.0
+   distance_tolerance = 2.0
+   max_non_overlap_ratio = 0.2
+   max_center_distance = 10.0
+
+   [colors]
+   col_tile_empty = 200, 200, 200, 255
+   col_tile_edge = 240, 240, 240, 255
+   col_grid = 220, 220, 220, 255
+   col_float_in = 100, 255, 100, 100
+   col_float_out = 0, 200, 0, 255
+   col_bldg_in = 200, 200, 200, 180
+   col_bldg_out = 100, 100, 100, 255
+   col_bldg_lbl = 255, 255, 255, 255
+   col_sel_bldg_in = 150, 180, 255, 180
+   col_sel_bldg_out = 0, 0, 255, 255
+   col_handle_in = 255, 255, 255, 255
+   col_handle_out = 0, 0, 255, 255
+
+Settings Section
+~~~~~~~~~~~~~~~~~
+
+**UI Settings**:
+
+* ``zoom_step_percent``: Zoom increment per mouse wheel step (default: 20)
+* ``circle_corners``: Number of vertices for circular buildings (default: 12)
+
+**Paths**:
+
+* ``gba_directory``: Path to Global Building Atlas tile directory
+
+**Import Tolerances**:
+
+* ``height_tolerance``: Height matching tolerance for merging (default: 0.1)
+* ``angle_tolerance``: Rectangle detection angle tolerance in degrees (default: 15.0)
+* ``distance_tolerance``: Shape simplification tolerance in meters (default: 2.0)
+* ``max_non_overlap_ratio``: Maximum fitting error ratio (default: 0.2)
+* ``max_center_distance``: AUSTAL center distance tolerance in meters (default: 10.0)
+
+Colors Section
+~~~~~~~~~~~~~~~
+
+Colors are specified as comma-separated RGBA values (0-255):
+
+* ``col_tile_empty``: Background color for empty map tiles
+* ``col_tile_edge``: Border color for map tiles
+* ``col_grid``: Grid line color
+* ``col_float_in``: Building preview fill color
+* ``col_float_out``: Building preview outline color
+* ``col_bldg_in``: Building fill color
+* ``col_bldg_out``: Building outline color
+* ``col_bldg_lbl``: Building label text color
+* ``col_sel_bldg_in``: Selected building fill color
+* ``col_sel_bldg_out``: Selected building outline color
+* ``col_handle_in``: Selection handle fill color
+* ``col_handle_out``: Selection handle outline color
+
+Manual Editing
+~~~~~~~~~~~~~~~
+
+The settings file can be edited manually while CitySketch is not running.
+Changes take effect on the next application start. Invalid values are
+silently replaced with defaults.
 
