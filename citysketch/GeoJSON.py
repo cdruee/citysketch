@@ -28,6 +28,12 @@ This module provides functionality for:
    :value: 2.0
 
    Tolerance in meters for shape simplification.
+
+.. data:: MAX_NON_OVERLAP_RATIO
+   :value: 0.20
+
+   Maximum allowed ratio (20%) of non-overlapping area between original
+   polygon and fitted rectangle for simple rectangle fitting to be accepted.
 """
 
 import json
@@ -41,7 +47,6 @@ from dataclasses import dataclass
 
 import numpy as np
 from osgeo import osr
-osr.UseExceptions()
 
 from .Building import Building
 from .utils import get_epsg2ll
@@ -57,6 +62,7 @@ from .building_simplification import (
 HEIGHT_TOLERANCE = 0.10  # 10% tolerance for height matching
 ANGLE_TOLERANCE = 15.0  # degrees for rectangle detection
 DISTANCE_TOLERANCE = 2.0  # meters for shape simplification
+MAX_NON_OVERLAP_RATIO = 0.20  # Maximum allowed non-overlapping area ratio (20%)
 
 
 def extract_epsg(crs_object):
@@ -384,14 +390,17 @@ class GeoJsonBuilding:
         cx, cy = (lat1 + lat2) / 2, (lon1 + lon2) / 2
         return self.contains_point(cx, cy)
 
-    def to_buildings(self, geo_to_world=None):
+    def to_buildings(self, storey_height: float = 3.3, geo_to_world=None):
         """
         Convert to one or more CitySketch Building objects by fitting rectangles.
         
         For complex polygon shapes (L-shaped, T-shaped, etc.), multiple
         rectangles may be fitted using the Ferrari-Sankar-Sklansky algorithm.
         
-        :param geo_to_world: Optional function to convert (lat, lon) to
+        :param storey_height: Height per storey in meters for calculating
+            storey count. Default is 3.3m.
+        :type storey_height: float
+        :param geo_to_world: Optional function to convert (lat, lon) to 
             world coordinates (x, y). If None, coordinates are used as-is.
         :type geo_to_world: callable or None
         :returns: List of Building objects fitted to the polygon.
@@ -439,7 +448,7 @@ class GeoJsonBuilding:
                 a=a,
                 b=b,
                 height=self.height,
-                storeys=None,
+                storeys=max(1, round(self.height / storey_height)),
                 rotation=rotation
             )
 
@@ -450,7 +459,7 @@ class GeoJsonBuilding:
 
         return buildings
 
-    def to_building(self, geo_to_world=None):
+    def to_building(self, storey_height: float = 3.3, geo_to_world=None):
         """
         Convert to a single CitySketch Building object.
         
@@ -458,6 +467,8 @@ class GeoJsonBuilding:
         largest) fitted rectangle. For complex polygons that decompose into
         multiple buildings, use :meth:`to_buildings` instead.
         
+        :param storey_height: Height per storey in meters. Default is 3.3m.
+        :type storey_height: float
         :param geo_to_world: Optional coordinate transformation function.
         :type geo_to_world: callable or None
         :returns: The first fitted Building, or None if fitting fails.
@@ -465,7 +476,7 @@ class GeoJsonBuilding:
         
         .. seealso:: :meth:`to_buildings`
         """
-        buildings = self.to_buildings(geo_to_world=geo_to_world)
+        buildings = self.to_buildings(storey_height, geo_to_world=geo_to_world)
         return buildings[0] if buildings else None
 
 
@@ -482,6 +493,129 @@ class RectangleFitter:
         :mod:`building_simplification`
             Module containing the underlying algorithms.
     """
+
+    @staticmethod
+    def _polygon_area(coordinates: List[Tuple[float, float]]) -> float:
+        """
+        Calculate the area of a polygon using the shoelace formula.
+        
+        :param coordinates: List of (x, y) polygon vertices.
+        :type coordinates: List[Tuple[float, float]]
+        :returns: Absolute area of the polygon.
+        :rtype: float
+        """
+        n = len(coordinates)
+        if n < 3:
+            return 0.0
+        
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += coordinates[i][0] * coordinates[j][1]
+            area -= coordinates[j][0] * coordinates[i][1]
+        return abs(area) / 2.0
+
+    @staticmethod
+    def _polygon_intersection_area(poly1: List[Tuple[float, float]], 
+                                   poly2: List[Tuple[float, float]]) -> float:
+        """
+        Calculate the intersection area of two convex polygons using
+        Sutherland-Hodgman clipping algorithm.
+        
+        :param poly1: First polygon vertices.
+        :type poly1: List[Tuple[float, float]]
+        :param poly2: Second polygon vertices (used as clipping polygon).
+        :type poly2: List[Tuple[float, float]]
+        :returns: Area of intersection.
+        :rtype: float
+        """
+        def line_intersection(p1, p2, p3, p4):
+            """Find intersection point of two line segments."""
+            x1, y1 = p1
+            x2, y2 = p2
+            x3, y3 = p3
+            x4, y4 = p4
+            
+            denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+            if abs(denom) < 1e-10:
+                return None
+            
+            t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+            x = x1 + t * (x2 - x1)
+            y = y1 + t * (y2 - y1)
+            return (x, y)
+        
+        def is_inside(point, edge_start, edge_end):
+            """Check if point is on the left side of the edge."""
+            return ((edge_end[0] - edge_start[0]) * (point[1] - edge_start[1]) - 
+                    (edge_end[1] - edge_start[1]) * (point[0] - edge_start[0])) >= 0
+        
+        output = list(poly1)
+        
+        for i in range(len(poly2)):
+            if len(output) == 0:
+                return 0.0
+            
+            input_poly = output
+            output = []
+            
+            edge_start = poly2[i]
+            edge_end = poly2[(i + 1) % len(poly2)]
+            
+            for j in range(len(input_poly)):
+                current = input_poly[j]
+                next_pt = input_poly[(j + 1) % len(input_poly)]
+                
+                if is_inside(current, edge_start, edge_end):
+                    if is_inside(next_pt, edge_start, edge_end):
+                        output.append(next_pt)
+                    else:
+                        intersection = line_intersection(current, next_pt, edge_start, edge_end)
+                        if intersection:
+                            output.append(intersection)
+                elif is_inside(next_pt, edge_start, edge_end):
+                    intersection = line_intersection(current, next_pt, edge_start, edge_end)
+                    if intersection:
+                        output.append(intersection)
+                    output.append(next_pt)
+        
+        return RectangleFitter._polygon_area(output)
+
+    @staticmethod
+    def _calculate_fit_quality(original_coords: List[Tuple[float, float]],
+                               fitted_rect_coords: List[Tuple[float, float]]) -> float:
+        """
+        Calculate how well a fitted rectangle matches the original polygon.
+        
+        Returns the ratio of non-overlapping area to total area. A value of 0
+        means perfect fit, a value of 1 means no overlap at all.
+        
+        :param original_coords: Original polygon vertices.
+        :type original_coords: List[Tuple[float, float]]
+        :param fitted_rect_coords: Fitted rectangle vertices (4 corners).
+        :type fitted_rect_coords: List[Tuple[float, float]]
+        :returns: Non-overlap ratio (0.0 = perfect fit, 1.0 = no overlap).
+        :rtype: float
+        """
+        original_area = RectangleFitter._polygon_area(original_coords)
+        rect_area = RectangleFitter._polygon_area(fitted_rect_coords)
+        
+        if original_area < 1e-10 or rect_area < 1e-10:
+            return 1.0
+        
+        # Calculate intersection area
+        intersection_area = RectangleFitter._polygon_intersection_area(
+            original_coords, fitted_rect_coords)
+        
+        # Non-overlapping area = (original - intersection) + (rect - intersection)
+        # This is the symmetric difference
+        non_overlap_area = (original_area - intersection_area) + (rect_area - intersection_area)
+        total_area = original_area + rect_area - intersection_area  # Union area
+        
+        if total_area < 1e-10:
+            return 1.0
+        
+        return non_overlap_area / total_area
 
     @staticmethod
     def fit_single_rectangle(coordinates: List[Tuple[float, float]]) -> \
@@ -533,21 +667,42 @@ class RectangleFitter:
 
     @staticmethod
     def is_approximately_rectangular(
-            coordinates: List[Tuple[float, float]]) -> bool:
+            coordinates: List[Tuple[float, float]], 
+            check_fit_quality: bool = True) -> bool:
         """
         Check if a polygon is approximately rectangular.
         
         Analyzes the interior angles to determine if the polygon has
-        mostly right angles (within :data:`ANGLE_TOLERANCE`).
+        mostly right angles (within :data:`ANGLE_TOLERANCE`). Optionally
+        also verifies that a fitted rectangle has good overlap with the
+        original polygon (within :data:`MAX_NON_OVERLAP_RATIO`).
         
         :param coordinates: List of (x, y) polygon vertices.
         :type coordinates: List[Tuple[float, float]]
-        :returns: True if the polygon is approximately rectangular.
+        :param check_fit_quality: If True, also verify the fitted rectangle
+            has acceptable overlap with the original polygon.
+        :type check_fit_quality: bool
+        :returns: True if the polygon is approximately rectangular and
+            (if check_fit_quality is True) the fit is acceptable.
         :rtype: bool
         """
-        if len(coordinates) < 4 or len(coordinates) > 8:
-            return len(coordinates) <= 6
+        if len(coordinates) < 4:
+            return False
+        
+        # For very simple polygons, accept them
+        if len(coordinates) == 4:
+            # Still check fit quality for 4-vertex polygons
+            if check_fit_quality:
+                fitted_corners = RectangleFitter.simplify_to_rectangle(coordinates)
+                non_overlap = RectangleFitter._calculate_fit_quality(
+                    coordinates, fitted_corners)
+                return non_overlap <= MAX_NON_OVERLAP_RATIO
+            return True
+        
+        if len(coordinates) > 8:
+            return False
 
+        # Check angles
         angles = []
         for i in range(len(coordinates)):
             p1 = coordinates[i]
@@ -565,7 +720,19 @@ class RectangleFitter:
 
         right_angles = sum(
             1 for a in angles if abs(a - 90) < ANGLE_TOLERANCE)
-        return right_angles >= len(coordinates) - 2
+        has_rectangular_angles = right_angles >= len(coordinates) - 2
+        
+        if not has_rectangular_angles:
+            return False
+        
+        # Check fit quality if requested
+        if check_fit_quality:
+            fitted_corners = RectangleFitter.simplify_to_rectangle(coordinates)
+            non_overlap = RectangleFitter._calculate_fit_quality(
+                coordinates, fitted_corners)
+            return non_overlap <= MAX_NON_OVERLAP_RATIO
+        
+        return True
 
     @staticmethod
     def simplify_to_rectangle(coordinates: List[Tuple[float, float]]) -> \
