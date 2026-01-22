@@ -9,7 +9,7 @@ import uuid
 
 from osgeo import osr
 
-from utils import LL, GK, UT, gk2ll, ll2gk, ut2ll, ll2ut, math2geo, \
+from .utils import LL, GK, UT, gk2ll, ll2gk, ut2ll, ll2ut, math2geo, \
     geo2math
 from .Building import Building
 from .AppSettings import settings as app_settings
