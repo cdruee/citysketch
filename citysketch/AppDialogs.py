@@ -1,5 +1,9 @@
+import json
 import re
 import sys
+import threading
+import urllib.request
+import urllib.parse
 
 import wx
 from numpy import __version__ as numpy_ver
@@ -150,7 +154,7 @@ class CenterLocationDialog(wx.Dialog):
     """Dialog for setting and configuring map center location"""
 
     def __init__(self, parent, lat, lon, show_marker=False):
-        super().__init__(parent, title="Center Location", size=(400, 400))
+        super().__init__(parent, title="Center Location", size=(450, 620))
 
         self.lat = lat
         self.lon = lon
@@ -178,6 +182,48 @@ class CenterLocationDialog(wx.Dialog):
         self.lon_ctrl = wx.TextCtrl(panel, value=f"{self.lon:.6f}")
         lon_box.Add(self.lon_ctrl, 1, wx.EXPAND)
         location_sizer.Add(lon_box, 0, wx.EXPAND | wx.ALL, 5)
+
+        # Look up coordinates section
+        lookup_label = wx.StaticText(panel, label="Look up coordinates")
+        lookup_label.SetFont(lookup_label.GetFont().MakeBold())
+        location_sizer.Add(lookup_label, 0, wx.LEFT | wx.TOP, 5)
+
+        # Place name input
+        place_box = wx.BoxSizer(wx.HORIZONTAL)
+        place_label = wx.StaticText(panel, label="Place:", size=(80, -1))
+        place_box.Add(place_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        self.place_ctrl = wx.TextCtrl(panel, value="",
+                                      style=wx.TE_PROCESS_ENTER)
+        self.place_ctrl.SetHint("Enter place name...")
+        place_box.Add(self.place_ctrl, 1, wx.EXPAND | wx.RIGHT, 5)
+        self.lookup_btn = wx.Button(panel, label="Search")
+        place_box.Add(self.lookup_btn, 0)
+        location_sizer.Add(place_box, 0, wx.EXPAND | wx.ALL, 5)
+
+        # Results list
+        self.results_list = wx.ListBox(panel, size=(-1, 110),
+                                       style=wx.LB_SINGLE)
+        location_sizer.Add(self.results_list, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 5)
+
+        # Use button and status
+        result_action_box = wx.BoxSizer(wx.HORIZONTAL)
+        self.lookup_status = wx.StaticText(panel, label="")
+        self.lookup_status.SetFont(self.lookup_status.GetFont().MakeSmaller())
+        result_action_box.Add(self.lookup_status, 1, wx.ALIGN_CENTER_VERTICAL)
+        self.use_btn = wx.Button(panel, label="Apply")
+        self.use_btn.Enable(False)
+        result_action_box.Add(self.use_btn, 0)
+        location_sizer.Add(result_action_box, 0, wx.EXPAND | wx.ALL, 5)
+
+        # Store lookup results data
+        self._lookup_results = []
+
+        # Bind lookup events
+        self.lookup_btn.Bind(wx.EVT_BUTTON, self.on_lookup)
+        self.place_ctrl.Bind(wx.EVT_TEXT_ENTER, self.on_lookup)
+        self.results_list.Bind(wx.EVT_LISTBOX, self.on_result_selected)
+        self.results_list.Bind(wx.EVT_LISTBOX_DCLICK, self.on_result_dclick)
+        self.use_btn.Bind(wx.EVT_BUTTON, self.on_use_result)
 
         # Quick location buttons - arranged in 2x2 grid
         quick_label = wx.StaticText(panel, label="Quick Locations:")
@@ -222,19 +268,22 @@ class CenterLocationDialog(wx.Dialog):
         sizer.Add(marker_sizer, 0,
                   wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
-        # Add some spacing
-        sizer.Add((-1, 10))
-
         # Buttons
         btn_sizer = wx.StdDialogButtonSizer()
         ok_btn = wx.Button(panel, wx.ID_OK)
+        ok_btn.SetDefault()
         cancel_btn = wx.Button(panel, wx.ID_CANCEL)
         btn_sizer.AddButton(ok_btn)
         btn_sizer.AddButton(cancel_btn)
         btn_sizer.Realize()
         sizer.Add(btn_sizer, 0, wx.EXPAND | wx.ALL, 10)
 
-        panel.SetSizerAndFit(sizer)
+        panel.SetSizer(sizer)
+        
+        # Make panel fill the dialog
+        dialog_sizer = wx.BoxSizer(wx.VERTICAL)
+        dialog_sizer.Add(panel, 1, wx.EXPAND)
+        self.SetSizer(dialog_sizer)
 
         # Center the dialog
         self.Centre()
@@ -243,6 +292,116 @@ class CenterLocationDialog(wx.Dialog):
         """Set location in text controls"""
         self.lat_ctrl.SetValue(f"{lat:.6f}")
         self.lon_ctrl.SetValue(f"{lon:.6f}")
+
+    def on_lookup(self, event):
+        """Handle place name lookup using Nominatim"""
+        place_name = self.place_ctrl.GetValue().strip()
+        if not place_name:
+            self.lookup_status.SetLabel("Please enter a place name.")
+            return
+
+        # Clear previous results
+        self.results_list.Clear()
+        self._lookup_results = []
+        self.use_btn.Enable(False)
+
+        # Disable button and show searching status
+        self.lookup_btn.Enable(False)
+        self.lookup_status.SetLabel("Searching...")
+
+        # Run lookup in background thread to keep UI responsive
+        thread = threading.Thread(target=self._do_lookup, args=(place_name,))
+        thread.daemon = True
+        thread.start()
+
+    def _do_lookup(self, place_name):
+        """Perform the actual Nominatim lookup in a background thread"""
+        try:
+            # Build Nominatim API URL
+            params = urllib.parse.urlencode({
+                'q': place_name,
+                'format': 'json',
+                'limit': 5
+            })
+            url = f"https://nominatim.openstreetmap.org/search?{params}"
+
+            # Create request with User-Agent (required by Nominatim)
+            request = urllib.request.Request(
+                url,
+                headers={'User-Agent': 'CitySketch/1.0'}
+            )
+
+            # Perform the request
+            with urllib.request.urlopen(request, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+
+            # Process result on main thread
+            wx.CallAfter(self._handle_lookup_result, data, place_name)
+
+        except urllib.error.URLError as e:
+            wx.CallAfter(self._handle_lookup_error, f"Network error: {e.reason}")
+        except json.JSONDecodeError:
+            wx.CallAfter(self._handle_lookup_error, "Invalid response from server")
+        except Exception as e:
+            wx.CallAfter(self._handle_lookup_error, str(e))
+
+    def _handle_lookup_result(self, data, place_name):
+        """Handle successful lookup result (called on main thread)"""
+        self.lookup_btn.Enable(True)
+        self.results_list.Clear()
+        self._lookup_results = []
+
+        if not data:
+            self.lookup_status.SetLabel(f"No results for '{place_name}'")
+            return
+
+        # Store results and populate list
+        for result in data:
+            try:
+                lat = float(result['lat'])
+                lon = float(result['lon'])
+                display_name = result.get('display_name', 'Unknown')
+
+                # Truncate long display names
+                if len(display_name) > 60:
+                    display_name = display_name[:57] + "..."
+
+                self._lookup_results.append((lat, lon, display_name))
+                self.results_list.Append(display_name)
+
+            except (KeyError, ValueError):
+                continue
+
+        if self._lookup_results:
+            self.lookup_status.SetLabel(f"{len(self._lookup_results)} result(s) found")
+            # Select first result by default
+            self.results_list.SetSelection(0)
+            self.use_btn.Enable(True)
+        else:
+            self.lookup_status.SetLabel("No valid results")
+
+    def _handle_lookup_error(self, error_msg):
+        """Handle lookup error (called on main thread)"""
+        self.lookup_btn.Enable(True)
+        self.lookup_status.SetLabel(f"Error: {error_msg}")
+
+    def on_result_selected(self, event):
+        """Handle selection change in results list"""
+        selection = self.results_list.GetSelection()
+        self.use_btn.Enable(selection != wx.NOT_FOUND)
+
+    def on_result_dclick(self, event):
+        """Handle double-click on a result - apply it immediately"""
+        self.on_use_result(event)
+
+    def on_use_result(self, event):
+        """Apply the selected result to the coordinate fields"""
+        selection = self.results_list.GetSelection()
+        if selection == wx.NOT_FOUND or selection >= len(self._lookup_results):
+            return
+
+        lat, lon, display_name = self._lookup_results[selection]
+        self.set_location(lat, lon)
 
     def get_values(self):
         """Get the current values"""
