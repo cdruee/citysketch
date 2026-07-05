@@ -23,6 +23,7 @@ test_latest:
   stage: test
   before_script:
     - apt-get update && apt-get install -y git python3-pip
+    - apt-get install -y python3-wxgtk4.0
     # Install system dependencies for GDAL
     - apt-get install -y gdal-bin libgdal-dev
     - apt-get install -y python3-build python3-setuptools-scm python3-gdal
